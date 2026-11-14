@@ -1,0 +1,26 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User profile for Sivitas Akademika FT UNBARI",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string", "description": "User UID from Firebase Auth" },
+        "email": { "type": "string", "description": "Email address of the user" },
+        "displayName": { "type": "string", "description": "Full name with academic degree" },
+        "role": { "type": "string", "enum": ["dekan", "kaprodi", "dosen", "staff", "admin"], "description": "Academic role" },
+        "prodiId": { "type": "string", "description": "Associated study program ID or dekanat" },
+        "nidn": { "type": "string", "description": "Nomor Induk Dosen Nasional or NIP" },
+        "photoURL": { "type": "string", "description": "URL to profile photo" },
+        "createdAt": { "type": "string", "description": "Account registration timestamp" }
+      },
+      "required": ["uid", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "Stores user account information and role assignments"
+    }
+  }
+}

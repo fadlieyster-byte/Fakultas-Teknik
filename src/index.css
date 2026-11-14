@@ -1,0 +1,235 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  }
+}
+
+/* Custom scrollbar for data tables */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}
+
+/* Print Media Styles for Official Documents & Reports */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 1cm 1cm 1cm 1cm; /* Margin Cetak 1 1 1 1 (1cm Top, 1cm Right, 1cm Bottom, 1cm Left) */
+  }
+
+  *, *::before, *::after {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    box-sizing: border-box !important;
+  }
+
+  html, body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    font-size: 10.5pt !important;
+    line-height: 1.4 !important;
+    width: 100% !important;
+  }
+
+  /* Suppress links from appending URLs in print */
+  a {
+    text-decoration: none !important;
+    color: inherit !important;
+  }
+  a[href]::after {
+    content: none !important;
+  }
+
+  /* Hide app chrome, navigation bar, footer, toasts, and buttons */
+  header,
+  footer,
+  nav,
+  aside,
+  .no-print,
+  button,
+  .print\:hidden {
+    display: none !important;
+  }
+
+  /* When is-printing-document portal is active, isolate only the portal */
+  body.is-printing-document #root {
+    display: none !important;
+  }
+
+  body.is-printing-document #print-active-portal {
+    display: block !important;
+    position: static !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+    border: none !important;
+  }
+
+  #print-active-portal {
+    display: none;
+  }
+
+  /* When printing directly from modal dialog without portal, hide background dashboard */
+  body:has([role="dialog"]) #root > div > main,
+  body:has([role="dialog"]) #root > div > header,
+  body:has([role="dialog"]) #root > div > footer,
+  body:has(.printable-sheet) #root > div > main,
+  body:has(.printable-sheet) #root > div > header,
+  body:has(.printable-sheet) #root > div > footer {
+    display: none !important;
+  }
+
+  /* Make fixed modal overlays transparent and non-blocking in print */
+  .fixed,
+  [role="dialog"] {
+    position: static !important;
+    background: #ffffff !important;
+    box-shadow: none !important;
+    border: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100% !important;
+    max-height: none !important;
+    overflow: visible !important;
+    inset: auto !important;
+    display: block !important;
+  }
+
+  /* Hide modal control headers, action footers, and interactive UI controls */
+  .modal-top-bar,
+  .modal-bottom-bar,
+  .print-controls,
+  [data-print-hide="true"] {
+    display: none !important;
+  }
+
+  /* Printable sheets expand cleanly without grey borders or shadows */
+  .printable-sheet,
+  .printable-document,
+  .printable-report {
+    box-shadow: none !important;
+    border: none !important;
+    max-width: 100% !important;
+    width: 100% !important;
+    min-height: 0 !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    background: #ffffff !important;
+    position: relative !important;
+    display: block !important;
+  }
+
+  .printable-report-header {
+    display: block !important;
+    margin-bottom: 14px !important;
+  }
+
+  .printable-report-auto {
+    display: block !important;
+    width: 100% !important;
+  }
+
+  .akreditasi-screen-only {
+    display: none !important;
+  }
+
+  .printable-report-table {
+    font-size: 8.5pt !important;
+    line-height: 1.25 !important;
+  }
+
+  /* Standard Kop Surat double border rendered crisply */
+  .border-double,
+  .border-b-4.border-double {
+    border-bottom: 3.5px double #0f172a !important;
+  }
+
+  /* Official UNBARI Watermark for SKL and Academic Credentials */
+  .watermark-unbari {
+    display: flex !important;
+    position: absolute !important;
+    inset: 0 !important;
+    align-items: center !important;
+    justify-content: center !important;
+    pointer-events: none !important;
+    user-select: none !important;
+    z-index: 0 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  .watermark-unbari img {
+    display: block !important;
+    max-width: 80% !important;
+    max-height: 80% !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Tables formatting for sharp official A4 printing */
+  table {
+    border-collapse: collapse !important;
+    width: 100% !important;
+    page-break-inside: auto;
+    margin-bottom: 8px;
+  }
+
+  thead {
+    display: table-header-group !important;
+  }
+
+  tfoot {
+    display: table-row-group !important;
+  }
+
+  tr {
+    page-break-inside: avoid !important;
+    page-break-after: auto;
+  }
+
+  th, td {
+    border: 1px solid #334155 !important;
+    padding: 4px 6px !important;
+    vertical-align: top;
+  }
+
+  th {
+    background-color: #f1f5f9 !important;
+    color: #0f172a !important;
+    font-weight: 700 !important;
+  }
+
+  /* Signatures and essential sections must never break awkwardly across pages */
+  h1, h2, h3, h4 {
+    page-break-after: avoid !important;
+    break-after: avoid !important;
+  }
+
+  .signature-block,
+  .tanda-tangan,
+  .grid-cols-2:has(.border-b-slate-800),
+  .grid-cols-2:has(.border-b-slate-900),
+  .grid-cols-2:has(.border-b),
+  .grid:has(.border-b-slate-800) {
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+}
+

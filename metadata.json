@@ -1,0 +1,8 @@
+{
+  "name": "SiKaprodi FT UNBARI - Monitoring Mahasiswa & Jadwal Dosen",
+  "description": "Dashboard Ketua Program Studi Fakultas Teknik Universitas Batanghari (UNBARI) Jambi untuk pemantauan data akademik mahasiswa, skripsi/KP, dan jadwal mengajar dosen secara real-time.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

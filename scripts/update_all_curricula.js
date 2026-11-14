@@ -1,0 +1,383 @@
+import fs from 'fs';
+
+const RAW_LINGKUNGAN = `MKK42115	KALKULUS I	3		
+MKK42116	KIMIA DASAR I	2		
+MKK42117	FISIKA DASAR	3		
+MKK42118	EKOLOGI/PENGETAHUAN LINGKUNGAN	2		
+MKK42119	KONSEP TEKNOLOGI/PENGANTAR TL	2		
+MKK42311	ANALISA NUMERIK DAN KOMPUTASI	3		
+MKK42312	STATISTIKA & PROBABILITAS	2		
+MKK42313	MENGGAMBAR TEKNIK II	2		
+MKK42314	KONSERVASI LINGKUNGAN	2		
+MKK42315	MEKANIKA FLUIDA I	2		
+MKK42316	PENGETAHUAN STRUKTUR	2		
+MKK42317	EPIDEMIOLOGI & KESEHATAN LINGKUNGAN	3		
+MKK42318	PERPETAAN	3		
+MKK42319	KIMIA LINGKUNGAN	2		
+MKK42512	PLAMBING DAN INSTRUMENTASI	3		
+MKK42513	PENCEMARAN UDARA	3		
+MKK42514	SATUAN PROSES	2		
+MKK42515	PENGELOLAAN BAHAN BERACUN & BERBAHAYA	2		
+MKK42516	PENYALURAN AIR BUANGAN	2		
+MKK42517	PENYEDIAAN AIR MINUM	3		
+MKK42518	EKONOMI LINGKUNGAN	2		
+MKK42617	PENGELOLAAN SUMBER DAYA AIR	2		
+MKK42712	PENGELOLAAN KUALITAS LINGKUNGAN	3		
+MKK42714	PERENCANAAN BANGUNAN PENGO. AIR MINUM	3		
+MPB42814	TUGAS AKHIR/SKRIPSI	4		
+MPK42112	PENDIDIKAN AGAMA	3		
+MPK42113	BAHASA INDONESIA	3		
+MPK42114	ILMU SOSIAL DAN BUDAYA DASAR	3		
+MKK42320	PRAKTIKUM PERPETAAN	1	01	
+UBF42101	MATEMATIKA TEKNIK	3	01	
+UBF42102	FISIKA TEKNIK	2	01	
+UBN42101	PENDIDIKAN AGAMA	2	01	
+UBN42102	PENDIDIKAN PANCASILA	2	01	
+UBN42103	BAHASA INDONESIA	2	01	
+UBP42101	KALKULUS I	3	01	
+UBP42102	KIMIA LINGKUNGAN I	3	01	
+UBP42103	FISIKA LINGKUNGAN	2	01	
+UBP42104	MENGGAMBAR TEKNIK LINGKUNGAN	2	01	
+UBP42105	PRAKTIKUM KIMIA LINGKUNGAN	1	01	
+UBP42106	PRAKTIKUM FISIKA LINGKUNGAN	1	01	
+UBR42101	BAHASA INGGRIS	2	01	
+UBR42102	ILMU SOSIAL DASAR	2	01	
+UBR42103	ILMU BUDAYA JAMBI	2	01	
+MKK42219	MENGGAMBAR TEKNIK I	2	02	
+MKK42214	EKOSISTEM LAHAN BASAH	2	03	
+MKK42216	HUKUM LINGKUNGAN	2	03	
+UBP42314	MATEMATIKA LINGKUNGAN	3	03	
+UBP42315	HIDROLOGI LINGKUNGAN	2	03	
+UBP42316	PROSES PENGOLAHAN FISIKA KIMIA	2	03	
+UBP42317	MEKANIKA FLUIDA	3	03	
+UBP42318	MEKANIKA TEKNIK	3	03	
+UBP42319	PENGELOLAAN LAHAN BASAH	2	03	
+UBP42320	PERPETAAN	2	03	
+UBP42321	STATISTIK TEKNIK LINGKUNGAN	2	03	
+UBP42322	METODOLOGI RISET DAN PEN. LAPORAN	2	03	
+UBP42325	PRAKTIKUM PERPETAAN	1	03	
+UBP42326	MATEMATIKA LINGKUNGAN	2	03	
+UBP42327	TEKNIK PENGOLAHAN AIR	2	03	
+UBP42328	PENCEMARAN UDARA	2	03	
+MKK42412	MEKANIKA TEKNIK	3	04	
+MKK42414	MEKANIKA FLUIDA II	2	04	
+UBP42532	PENCEMARAN UDARA	3	05	
+UBP42533	REKAYASA DRAINASE	2	05	
+UBP42534	TEKNOLOGI LINGKUNGAN TEPAT GUNA	2	05	
+UBP42535	TEKNIK PENGOLAHAN AIR	2	05	
+UBP42536	PENGELOLAAN BAHAN BERACUN & BERBAHAYA	3	05	
+UBP42537	TEKNIK PENYEDIAAN AIR MINUM (+T)	3	05	
+UBP42538	HUKUM LINGKUNGAN	2	05	
+UBP42539	MITIGASI DAN PERUBAHAN IKLIM	2	05	
+UBP42540	KESEHATAN DAN KESELAMATAN KERJA	2	05	
+UBP42541	PROSES PENGOLAHAN BIOLOGI	2	05	
+UBP42542	PENGELOLAAN BAHAN BERACUN DAN BERBAHAYA	2	05	
+UBP42543	PENCEMARAN SUNGAI	2	05	
+MKK42614	DISTRIBUSI AIR BERSIH	2	06	
+UBP42743	KERJA PRAKTEK (KP)	2	07	
+UBP42744	SEMINAR PROPOSAL TUGAS AKHIR	1	07	
+UBP42745	PERENC. BANGUNAN PENGOLAHAN AIR BUANGAN	3	07	
+UBP42746	MANAJEMEN PROYEK	2	07	
+UBP42747	SISTEM MANAJEMEN LINGKUNGAN	2	07	
+UBP42748	KEWIRAUSAHAAN/TECHNOPRENEURSHIP	2	07	
+UBP42801	TUGAS AKHIR (SKRIPSI)	6	07	
+UBR42701	KERJA PRAKTEK	2	07	
+UBR42704	KULIAH KERJA NYATA (KUKERTA)	4	07	
+UBR42749	KULIAH KERJA NYATA (KKN)	4	07	
+MKK42215	FISIKA LINGKUNGAN	2	1	
+MKK42411	MATEMATIKA REKAYASA	3	1	
+MPK42211	BAHASA INGGRIS	2	1	
+MKK42205	FISIKA DASAR II	2	3	
+MKK42613	METODE RISET DAN PENULISAN LAPORAN	2	3	
+UBP42431	PENGELOLAAN SUMBER DAYA AIR	2	4	
+UBP42434	PENGOLAHAN SAMPAH	3	4	
+UBP42436	PENGOLAHAN SAMPAH	3	4	
+MKK42716	KULIAH KERJA NYATA	4	5	
+UBP42544	HUKUM LINGKUNGAN	2	5	
+UBP42545	PENYALUARAN AIR BUANGAN (T+)	2	5	
+UBP42644	TEKNOLOGI PENGENDALIAN PENCEMARAN UDARA	2	6	
+MKK42703	TEKNIK PENGOLAHAN AIR GAMBUT	2	7	
+MKK42706	TEKNIK PEMBUANGAN AKHIR	2	7	
+MKK42708	PENGENDALIAN BISING	2	7	
+UBA42901	PLAMBING	2	7	
+UBP42706	KESEHATAN LINGKUNGAN	2	7	
+UBP42714	PERENC. BANGUNAN PENGOLAHAN AIR MINUM	2	7	
+UBP42901	TEKNOLOGI PENGOLAHAN LIMBAH INDUSTRI	2	7	
+UBP42902	PLAMBING	2	7	
+UBP42903	KONSERVASI LINGKUNGAN	2	7	
+UBP42904	AUDIT LINGKUNGAN	2	7	
+UBP42905	PENGOLAHAN LUMPUR	2	7	
+UBP42906	SANITASI	2	7	
+UBP42907	PENGENDALIAN KEBISINGAN	2	7	
+UBP42908	KONSERVASI ENERGI LIMBAH	2	7	
+UBP42909	TEKNIK PENGOLAHAN LINDI	2	7	
+UBP42911	PERMODELAN TEKNIK LINGKUNGAN	2	7	
+UBP42913	PERENCANAAN KOTA DAN PENGEMBANGAN WILAYA	2	7	
+UBP42916	EKONOMI LINGKUNGAN	2	7	
+UBF42802	TUGAS AKHIR	4	8	
+UBP42910	EPIDEMIOLOGI LINGKUNGAN	2	9	
+UBP42912	GEOLOGI LINGKUNGAN	2	9	
+UBP42914	KEWIRAUSAHAAN	2	9	
+UBP42915	NANOTEKNOLOGI	2	9	
+MKK42511	HIDROLOGI DAN GEOHIDROLOGI	3	K	
+MKK42711	PERENCANAAN BANGUNAN PENGO. AIR BUANGAN	3	K	
+MKK42715	KERJA PRAKTEK	2	K	
+MPK42111	PENDIDIKAN PANCASILA	3`;
+
+const RAW_LISTRIK = `MKB43319	PRAKTIKUM PEMOGRAMAN KOMPUTER	2		
+MKB43320	PRAKTIKUM ELEKTRONIKA	2		
+MKB43321	PRAKTIKUM RANGKAIAN LOGIKA & DIGITAL	2		
+MKB43322	PRAKTIKUM SISTEM KENDALI	2		
+MKB43517	KERJA PRAKTEK LAPANGAN	2		
+MKB43518	PRAKTIKUM TRANSFORMATOR	2		
+MKB43519	PRAKTIKUM ELEKTRONIKA DAYA	2		
+MKB43520	PRAKTIKUM MIKROPROSESOR	2		
+MKB43521	PRAKTIKUM JARINGAN TEGANGAN MENENGAH	2		
+MKB43614	TUGAS AKHIR	4		
+MKK43115	MATEMATIKA TERAPAN I	2		
+MKK43116	DASAR TEKNIK ELEKTRO	2		
+MKK43117	INSTALASAI LISTRIK I	2		
+MKK43118	GAMBAR TEKNIK LISTRIK	2		
+MKK43119	RANGKAIAN LISTRIK I	2		
+MKK43120	BAHASA INGGRIS I	2		
+MKK43121	BAHAN BAHAN LISTRIK	2		
+MKK43312	BAHASA INDONESIA	3		
+MKK43313	ELEKTRONIKA II	2		
+MKK43314	MESIN ARUS SEARAH	2		
+MKK43317	DASAR SISTEM KENDALI	2		
+MKK43318	RANGKAIAN LOGIKA & DIGITAL	2		
+MKK43512	MEDAN ELEKTROMAGNET	2		
+MKK43513	ELEKTRONIKA DAYA	2		
+MKK43514	DISTRIBUSI TEGANGAN MENENGAH	2		
+MKK43515	ENERGI BARU TERBARUKAN	2		
+MKK43516	TRANSMISI DAN GARDU INDUK	2		
+MPB43315	K3 LSITRIK & HUKUM KETENAGAKERJAAN	2		
+MPK43112	PENDIDIKAN AGAMA	3		
+MPK43113	PENDIDIKAN PANCASILA & KEWARGANEGARAAN	3		
+MBF43101	MATEMATIKA TEKNIK	2	01	
+MBN43101	AGAMA	2	01	
+MBN43102	PANCASILA	2	01	
+MBP43101	RANGKAIAN LISTRIK I	2	01	
+MBP43103	ELEKTROMAGNETIK	2	01	
+MBP43104	GAMBAR TEKNIK KELISTRIKA	2	01	
+MBP43110	WORKSHOP INSTALASI PENERANGAN	2	01	
+MBR43101	BAHASA INGGRIS TEKNIK	2	01	
+MBR43102	ILMU SOSIAL DASAR	2	01	
+MBR43104	WORKSHOP PEMOGRAMAN KOMPUTER	2	01	
+UBF43101	MATEMATIKA TEKNIK	3	01	
+UBF43102	FISIKA TEKNIK	3	01	
+UBN43101	PENDIDIKAN AGAMA	2	01	
+UBN43102	PENDIDIKAN PANCASILA	2	01	
+UBP43101	RANGKAIAN LISTRIK I	2	01	
+UBP43103	MENGGAMBAR TEKNIK ELEKTRO	2	01	
+UBP43109	FISIKA LISTRIK	2	01	
+UBP43110	MATEMATIKA TEKNIK I	2	01	
+UBP43112	RANGKAIAN LISTRIK	2	01	
+UBP43113	DASAR ELEKTRONIKA	2	01	
+UBP43116	INSTALASI LISTRIK	2	01	
+UBP43124	GAMBAR TEKNIK ELEKTRO	3	01	
+UBP43125	PRAKTIKUM LISTRIK DASAR	3	01	
+UBR43101	BAHASA INGGRIS TEKNIK	2	01	
+UBR43102	ILMU SOSIAL DASAR	2	01	
+UBR43104	APLIKASI KOMPUTER	2	01	
+UBR43106	BUDAYA MELAYU JAMBI	2	01	
+MKB43218	PRAKTEK LISTRIK DASAR	2	02	
+MKK43217	INSTALASI LISTRIK II	3	02	
+MBP43313	TEKNIK KENDALI	2	03	
+MBP43314	SISTEM MIKROKONTROLER & TEK. ANTAR MUKA	2	03	
+MBP43315	ELEKTRONIKA DAYA	2	03	
+MBP43316	LABOR ELEKTRONIK DAYA DAN KENDALI	1	03	
+MBP43317	PEMBANGKIT TENAGA LISTRIK	2	03	
+MBP43318	KUALITAS DAYA LISTRIK	2	03	
+MBP43319	GARDU INDUK & TRANSFORMATOR	2	03	
+MBP43320	MESIN LISTRIK	2	03	
+MBP43321	LABOR MESIN LISTRIK & TRANFORMATOR	1	03	
+MBP43322	WORKSHOP PEMELIHARAAB PERALATAN LISTRIK	2	03	
+MBP43323	WORKSHOP PANEL LISTRIK	2	03	
+UBN43304	BAHASA INDONESIA	2	03	
+UBP43316	DISTRIBUSI SISTEM TENAGA	2	03	
+UBP43317	MESIN-MESIN LISTRIK	2	03	
+UBP43321	SISTEM KENDALU DAN PLC	2	03	
+UBP43330	PRAKTEK INSTALASI TENAGA LISTRIK	3	03	
+UBP43332	PRAKTIKUM MESIN-MESIN LSTRIK	3	03	
+UBP43334	PRAKTIKUM JARINGAN TEGANGAN RENDAH	3	03	
+UBP43338	PRAKTIKUM MIKROPROSESOR	3	03	
+UBP43623	KEWIRAUSAHAAN LISTRIK	2	04	
+UBF43508	KERJA PRAKTEK LAPANGAN	3	05	
+UBP43515	EKLTRONIKA DAYA	2	05	
+UBP43520	SISTEM PROTEKSI	2	05	
+UBP43527	PRAKTIKUM ELEKTRONIKA ANALOG	3	05	
+UBP43539	PRAKTIKUM PLC	3	05	
+UBP43540	PRAKTEK PENGUKURAN LISTRIK	3	05	
+UBP43636	PRAKTIKUM ELEKTRONIKA DAYA	3	06	
+UBP43641	PERAWATAN DAN PERBAIKAN INSTALASI LISTRI	2	06	
+UBP43643	TUGAS AKHIR	4	07	
+MKB43219	PRAKTEK INSTALASI LISTRIK II	2	2	
+MKK43316	PEMOGRAMAN KOMPUTER	2	4	
+MBF43507	PROYEK AKHIR	10	5	
+UBF43507	MAGANG	10	5	
+MBF43606	MAGANG	18	6	
+MKB43122	PRAKTIKUM INSTALASI LISTRIK I	2	K	
+MKK43114	FISIKA TERAPAN	2`;
+
+function parseCurriculum(rawText, prodiId, prefix) {
+  const lines = rawText.trim().split('\n');
+  const seenCodes = new Set();
+  const result = [];
+
+  for (const line of lines) {
+    if (!line.trim()) continue;
+    const parts = line.split('\t').map(p => p.trim());
+    const kodeMK = parts[0];
+    const namaMK = parts[1];
+    const sks = parseInt(parts[2], 10) || 2;
+    const semCol = parts[3] || '';
+
+    if (!kodeMK || !namaMK) continue;
+    // Normalize code key for uniqueness
+    let cleanCode = kodeMK.replace(/\s+/g, '');
+    let uniqueId = `MK-${prefix}-${cleanCode.replace(/[^a-zA-Z0-9]/g, '_')}`;
+    let counter = 1;
+    while (seenCodes.has(uniqueId)) {
+      counter++;
+      uniqueId = `MK-${prefix}-${cleanCode.replace(/[^a-zA-Z0-9]/g, '_')}_${counter}`;
+    }
+    seenCodes.add(uniqueId);
+
+    // Determine semester
+    let semester = 1;
+    if (semCol) {
+      const parsedNum = parseInt(semCol, 10);
+      if (!isNaN(parsedNum) && parsedNum >= 1 && parsedNum <= 8) {
+        semester = parsedNum;
+      } else if (semCol === '9') {
+        semester = prodiId === 'LISTRIK_D3' ? 6 : 8; // Pilihan akhir
+      } else if (semCol === 'K' || semCol === 'B') {
+        // Konsentrasi/Pilihan
+        semester = prodiId === 'LISTRIK_D3' ? 5 : 7;
+      }
+    } else {
+      // Deduce from code 3rd digit (e.g. MKK42115 -> 1, MKK42311 -> 3, MKK42512 -> 5, MKK42617 -> 6, MKK42712 -> 7, MPB42814 -> 8)
+      const digits = cleanCode.replace(/^[A-Z]+/, '');
+      if (digits.length >= 3) {
+        const semDigit = parseInt(digits[2], 10);
+        if (!isNaN(semDigit) && semDigit >= 1 && semDigit <= 8) {
+          semester = semDigit;
+        }
+      }
+    }
+
+    // Determine Teori & Praktikum SKS
+    const isPraktikum = /PRAKTIKUM|PRAKTEK|WORKSHOP|LABOR/i.test(namaMK);
+    const isSkripsi = /TUGAS AKHIR|SKRIPSI|PROYEK AKHIR|MAGANG/i.test(namaMK);
+    let sksTeori = sks;
+    let sksPraktikum = 0;
+    if (isPraktikum || isSkripsi) {
+      sksTeori = 0;
+      sksPraktikum = sks;
+    }
+
+    // Determine category
+    let jenis = 'Wajib Program Studi';
+    if (/^UBN|^MBN|^MPK/.test(cleanCode) || /KUKERTA|KKN|PANCASILA|AGAMA|KEWARGANEGARAAN/i.test(namaMK)) {
+      jenis = 'Wajib Universitas';
+    } else if (/^UBF|^MBF/.test(cleanCode) || /MATEMATIKA TEKNIK|FISIKA TEKNIK/i.test(namaMK)) {
+      jenis = 'Wajib Fakultas';
+    } else if (/^UBR|^MBR/.test(cleanCode)) {
+      jenis = 'Wajib Universitas';
+    } else if (semester >= 7 || semCol === 'K' || semCol === 'B' || semCol === '9' || /PILIHAN|NANOTEKNOLOGI|AUDIT LINGKUNGAN|LINDI|ENERGI BARU/i.test(namaMK)) {
+      jenis = 'Pilihan / MBKM';
+    }
+
+    // Determine lecturer
+    let dosenPengampu = 'Tim Dosen FT UNBARI';
+    if (prodiId === 'LINGKUNGAN') {
+      if (/KIMIA|PENGOLAHAN AIR|LIMBAH|DRAINASE|SAMPAH/i.test(namaMK)) {
+        dosenPengampu = 'Hadrah, ST., MT';
+      } else if (/AIR MINUM|MIKROBIOLOGI|SUMBER DAYA AIR|AMDAL|HIDROLOGI/i.test(namaMK)) {
+        dosenPengampu = 'Ir. Marhadi, ST., MT';
+      } else if (/UDARA|KESEHATAN|IKLIM|STATISTIK|MENGGAMBAR/i.test(namaMK)) {
+        dosenPengampu = 'Nadia Lestari, ST., MT';
+      } else if (/MATEMATIKA|KALKULUS|NUMERIK/i.test(namaMK)) {
+        dosenPengampu = 'Drs. H. M. Husin, M.Si';
+      } else if (/HUKUM/i.test(namaMK)) {
+        dosenPengampu = 'H. Zainal Abidin, SH., MH';
+      } else if (/KUKERTA|KKN/i.test(namaMK)) {
+        dosenPengampu = 'LPPM Universitas Batanghari';
+      }
+    } else if (prodiId === 'LISTRIK_D3') {
+      if (/MESIN|KENDALI|PLC|MIKROKONTROLER|WORKSHOP/i.test(namaMK)) {
+        dosenPengampu = 'Ir. Hendi Matalata, ST., MT, IPP';
+      } else if (/ELEKTRONIKA|TENAGA LISTRIK|RANGKAIAN LISTRIK/i.test(namaMK)) {
+        dosenPengampu = 'Fadli Eka Yandra, ST., MT';
+      } else if (/DISTRIBUSI|TRANSMISI|GARDU INDUK|PROTEKSI|INSTALASI/i.test(namaMK)) {
+        dosenPengampu = 'Leily Wustha Johar, ST., MT';
+      } else if (/KOMPUTER|PEMOGRAMAN/i.test(namaMK)) {
+        dosenPengampu = 'Rozlinda Dewi, S.Kom., M.S.I.';
+      } else if (/MATEMATIKA/i.test(namaMK)) {
+        dosenPengampu = 'Drs. H. M. Husin, M.Si';
+      } else if (/MAGANG|PROYEK AKHIR/i.test(namaMK)) {
+        dosenPengampu = 'Tim Pembimbing D3 Listrik FT UNBARI';
+      }
+    }
+
+    // Deskripsi
+    const deskripsi = `Kajian kompetensi kurikulum ${namaMK} pada Program Studi ${prodiId === 'LINGKUNGAN' ? 'S1 Teknik Lingkungan' : 'D3 Teknik Listrik'} FT UNBARI (${sks} SKS, Semester ${semester}).`;
+
+    result.push({
+      id: uniqueId,
+      kodeMK: cleanCode,
+      namaMK: namaMK,
+      sks: sks,
+      sksTeori: sksTeori,
+      sksPraktikum: sksPraktikum,
+      semester: semester,
+      prodiId: prodiId,
+      jenis: jenis,
+      prasyarat: [],
+      dosenPengampu: dosenPengampu,
+      deskripsi: deskripsi
+    });
+  }
+
+  return result;
+}
+
+const tlCourses = parseCurriculum(RAW_LINGKUNGAN, 'LINGKUNGAN', 'TL');
+const lstCourses = parseCurriculum(RAW_LISTRIK, 'LISTRIK_D3', 'EL');
+
+console.log(`Parsed Teknik Lingkungan courses: ${tlCourses.length}`);
+console.log(`Parsed D3 Teknik Listrik courses: ${lstCourses.length}`);
+
+// Generate TypeScript code
+let tlCode = `  // =========================================================================\n  // --- KURIKULUM RESMI PROGRAM STUDI TEKNIK LINGKUNGAN (S1) FT UNBARI ---\n  // =========================================================================\n`;
+for (const c of tlCourses) {
+  tlCode += `  {\n    id: '${c.id}',\n    kodeMK: '${c.kodeMK}',\n    namaMK: '${c.namaMK}',\n    sks: ${c.sks},\n    sksTeori: ${c.sksTeori},\n    sksPraktikum: ${c.sksPraktikum},\n    semester: ${c.semester},\n    prodiId: 'LINGKUNGAN',\n    jenis: '${c.jenis}',\n    prasyarat: [],\n    dosenPengampu: '${c.dosenPengampu}',\n    deskripsi: '${c.deskripsi}'\n  },\n`;
+}
+
+let lstCode = `  // =========================================================================\n  // --- KURIKULUM RESMI PROGRAM STUDI D3 TEKNIK LISTRIK FT UNBARI ---\n  // =========================================================================\n`;
+for (const c of lstCourses) {
+  lstCode += `  {\n    id: '${c.id}',\n    kodeMK: '${c.kodeMK}',\n    namaMK: '${c.namaMK}',\n    sks: ${c.sks},\n    sksTeori: ${c.sksTeori},\n    sksPraktikum: ${c.sksPraktikum},\n    semester: ${c.semester},\n    prodiId: 'LISTRIK_D3',\n    jenis: '${c.jenis}',\n    prasyarat: [],\n    dosenPengampu: '${c.dosenPengampu}',\n    deskripsi: '${c.deskripsi}'\n  },\n`;
+}
+
+// Read mockSiakadData.ts
+const targetFile = '/app/applet/src/data/mockSiakadData.ts';
+let content = fs.readFileSync(targetFile, 'utf8');
+
+// Find where Teknik Lingkungan starts in MATA_KULIAH_KURIKULUM
+const startMarker = '// ==========================================\n  // --- TEKNIK LINGKUNGAN (S1) ---';
+const endMarker = '];\n\n// ========================================================\n// INITIAL KRS RECORDS';
+
+const startIndex = content.indexOf(startMarker);
+const endIndex = content.indexOf(endMarker);
+
+if (startIndex === -1 || endIndex === -1) {
+  console.error('Markers not found! startIndex:', startIndex, 'endIndex:', endIndex);
+  process.exit(1);
+}
+
+const replacement = tlCode + '\n' + lstCode.trimEnd();
+const newContent = content.substring(0, startIndex) + replacement + '\n' + content.substring(endIndex);
+
+fs.writeFileSync(targetFile, newContent, 'utf8');
+console.log('Successfully updated mockSiakadData.ts with all official Lingkungan and Listrik courses!');
