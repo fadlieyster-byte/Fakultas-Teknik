@@ -18,6 +18,7 @@ import { KerjasamaView } from './components/KerjasamaView';
 import { GoogleWorkspaceView } from './components/GoogleWorkspaceView';
 import { LmsView } from './components/LmsView';
 import { SiakadView } from './components/SiakadView';
+import { SistemTerpaduAkademikView } from './components/SistemTerpaduAkademikView';
 import { VerifikasiDokumenModal } from './components/VerifikasiDokumenModal';
 import { MahasiswaKritisAuditModal } from './components/MahasiswaKritisAuditModal';
 import { AuditKehadiranMendadakModal } from './components/AuditKehadiranMendadakModal';
@@ -80,6 +81,9 @@ import { auth } from './firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import { mapFirebaseUserToAuthUser } from './data/authUsersData';
 import { INITIAL_KETERSEDIAAN_JADWAL } from './data/mockKetersediaanJadwalData';
+import { logKaprodiActivity, getBkdDeadlineInfo } from './utils/activityLogHelper';
+import { buildLabEquipmentAuditReport } from './utils/labEquipmentAuditHelper';
+import { signOutDriveSession } from './utils/driveService';
 
 function safeParseStorage<T>(key: string, fallback: T): T {
   try {
@@ -407,10 +411,24 @@ export default function App() {
   // Toast notification state
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
 
-  const showToast = (msg: string) => {
+  const showToast = React.useCallback((msg: string) => {
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 3000);
-  };
+    setTimeout(() => setToastMessage(null), 3500);
+  }, []);
+
+  const triggerWebPushNotification = React.useCallback(
+    (title: string, body: string) => {
+      try {
+        if (typeof window !== 'undefined' && 'Notification' in window && window.Notification.permission === 'granted') {
+          new window.Notification(title, { body });
+        }
+      } catch {
+        // fallback cleanly to toast
+      }
+      showToast(`${title}: ${body}`);
+    },
+    [showToast]
+  );
 
   // User Authentication State
   const [currentUser, setCurrentUser] = React.useState<AuthUser | null>(() => {
@@ -448,6 +466,7 @@ export default function App() {
   }, []);
 
   const handleLogout = async () => {
+    signOutDriveSession();
     try {
       await signOut(auth);
     } catch (e) {
@@ -466,6 +485,53 @@ export default function App() {
         setSelectedProdi(matchProdi);
       }
     }
+  };
+
+  // Automatic 3-Day BKD Upload Deadline Reminder on Dashboard Entry
+  React.useEffect(() => {
+    if (!currentUser) return;
+    const shownKey = 'sikaprodi_v15_bkd_reminder_shown_session';
+    if (sessionStorage.getItem(shownKey)) return;
+    const bkdInfo = getBkdDeadlineInfo();
+    if (bkdInfo.incompleteLecturers.length > 0) {
+      sessionStorage.setItem(shownKey, '1');
+      const timer = setTimeout(() => {
+        showToast(
+          `⚠️ Perhatian H-${bkdInfo.daysRemaining} Batas Unggah BKD (${bkdInfo.deadlineLabel}): ${bkdInfo.incompleteLecturers.length} dosen belum melengkapi berkas di Repository BKD.`
+        );
+      }, 900);
+      return () => clearTimeout(timer);
+    }
+  }, [currentUser, showToast]);
+
+  // Synchronize newly pulled SIAKAD students directly into App state
+  const handleSyncSiakadStudents = (newStudents: Mahasiswa[]): { added: number; updated: number } => {
+    let added = 0;
+    let updated = 0;
+    setMahasiswaList(prev => {
+      const map = new Map<string, Mahasiswa>();
+      prev.forEach(m => map.set(m.nim, m));
+      newStudents.forEach(item => {
+        if (map.has(item.nim)) {
+          map.set(item.nim, { ...map.get(item.nim)!, ...item });
+          updated++;
+        } else {
+          map.set(item.nim, item);
+          added++;
+        }
+      });
+      return Array.from(map.values());
+    });
+    logKaprodiActivity({
+      actor: currentUser?.displayName || selectedProdi.kaprodi,
+      role: currentUser?.roleLabel || 'Kaprodi',
+      prodiId: selectedProdi.id,
+      category: 'SYNC_WORKSPACE',
+      actionTitle: 'Sinkronisasi Data Mahasiswa SIAKAD Universitas',
+      detail: `Menarik ${newStudents.length} rekam mahasiswa beserta foto profil & riwayat KHS (${added} baru, ${updated} diperbarui).`,
+      severity: 'info'
+    });
+    return { added, updated };
   };
 
   // Global Keyboard Shortcuts for Web Version
@@ -819,6 +885,15 @@ export default function App() {
     if (!target) return;
     requestConfirm('Hapus Data Dosen', `Yakin ingin menghapus dosen ${target.namaLengkap}?`, () => {
       setDosenList(prev => prev.filter(d => d.nidn !== nidn));
+      logKaprodiActivity({
+        actor: currentUser?.displayName || selectedProdi.kaprodi,
+        role: currentUser?.roleLabel || 'Kaprodi',
+        prodiId: selectedProdi.id,
+        category: 'PENGHAPUSAN_DATA',
+        actionTitle: `Penghapusan Data Dosen (${target.nidn})`,
+        detail: `Menghapus data dosen ${target.namaLengkap} dari basis data program studi.`,
+        severity: 'critical'
+      });
       showToast(`Data dosen ${target.namaLengkap} telah dihapus.`);
     });
   };
@@ -839,6 +914,15 @@ export default function App() {
     if (!target) return;
     requestConfirm('Hapus Jadwal Kuliah', `Yakin ingin menghapus jadwal perkuliahan ${target.namaMK}?`, () => {
       setJadwalList(prev => prev.filter(j => j.id !== id));
+      logKaprodiActivity({
+        actor: currentUser?.displayName || selectedProdi.kaprodi,
+        role: currentUser?.roleLabel || 'Kaprodi',
+        prodiId: selectedProdi.id,
+        category: 'PENGHAPUSAN_DATA',
+        actionTitle: `Penghapusan Jadwal Kuliah ${target.kodeMK}`,
+        detail: `Menghapus jadwal ${target.namaMK} kelas ${target.kelas} (${target.hari} ${target.jamMulai}).`,
+        severity: 'critical'
+      });
       showToast(`Jadwal ${target.namaMK} telah dihapus.`);
     });
   };
@@ -1049,7 +1133,20 @@ export default function App() {
       });
     }
 
-    showToast(`Berita Acara Perkuliahan telah disahkan oleh Kaprodi & durasi kehadiran dosen tercatat.`);
+    logKaprodiActivity({
+      actor: currentUser?.displayName || selectedProdi.kaprodi,
+      role: currentUser?.roleLabel || 'Kaprodi',
+      prodiId: targetJadwal?.prodiId || selectedProdi.id,
+      category: 'VALIDASI_BAP',
+      actionTitle: `Validasi BAP ${targetJadwal ? `${targetJadwal.kodeMK} (${targetJadwal.namaMK})` : jadwalId}`,
+      detail: `Berita Acara Perkuliahan disahkan oleh Kaprodi. ${catatan || 'Status Terverifikasi.'}`,
+      severity: 'info'
+    });
+
+    triggerWebPushNotification(
+      'BAP Terverifikasi Sah',
+      `${targetJadwal ? targetJadwal.namaMK : 'Perkuliahan'} (${targetJadwal?.dosenNama || 'Dosen'}) telah disahkan & durasi tercatat.`
+    );
   };
 
   // Handler for Peringatan Ditindaklanjuti
@@ -1120,7 +1217,14 @@ export default function App() {
 
   const handleUpdateSuratTu = (surat: SuratPermohonanTU) => {
     setTuSuratList(prev => prev.map(s => s.id === surat.id ? surat : s));
-    showToast(`Status permohonan surat (${surat.nomorSurat || surat.jenisSurat}) diperbarui.`);
+    if (surat.status === 'Selesai & Diterbitkan') {
+      triggerWebPushNotification(
+        'Surat Tata Usaha Disetujui & Terbit',
+        `${surat.jenisSurat} a.n. ${surat.pemohonNama} (${surat.nomorSurat || 'Resmi'}) siap diunduh.`
+      );
+    } else {
+      showToast(`Status permohonan surat (${surat.nomorSurat || surat.jenisSurat}) diperbarui.`);
+    }
   };
 
   const handleDeleteSuratTu = (id: string) => {
@@ -1128,6 +1232,15 @@ export default function App() {
     if (!target) return;
     requestConfirm('Hapus Permohonan Surat', `Yakin ingin menghapus berkas permohonan surat ${target.jenisSurat} atas nama ${target.pemohonNama}?`, () => {
       setTuSuratList(prev => prev.filter(s => s.id !== id));
+      logKaprodiActivity({
+        actor: currentUser?.displayName || selectedProdi.kaprodi,
+        role: currentUser?.roleLabel || 'Kaprodi',
+        prodiId: selectedProdi.id,
+        category: 'PENGHAPUSAN_DATA',
+        actionTitle: `Hapus Berkas Surat TU (${target.jenisSurat})`,
+        detail: `Menghapus permohonan surat atas nama ${target.pemohonNama}.`,
+        severity: 'critical'
+      });
       showToast('Permohonan surat berhasil dihapus.');
     });
   };
@@ -1249,12 +1362,21 @@ export default function App() {
     m.prodiId === selectedProdi.id && (m.status === 'Berisiko' || m.peringatanSp > 0)
   ).length;
 
+  const pendingBapCount = jadwalList.filter(
+    j => j.prodiId === selectedProdi.id && j.bapStatus !== 'Terverifikasi'
+  ).length;
+
+  const urgentCalibrationCount = React.useMemo(() => {
+    const report = buildLabEquipmentAuditReport({ ruanganList, jadwalList });
+    return report.urgentCalibrationCount;
+  }, [ruanganList, jadwalList]);
+
   if (!currentUser) {
     return (
-      <div className="min-h-screen bg-slate-900">
+      <div className="min-h-screen bg-emerald-950">
         <LoginView onLoginSuccess={handleLoginSuccess} onShowToast={showToast} />
         {toastMessage && (
-          <div className="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl shadow-2xl text-xs flex items-center gap-2.5 border bg-slate-900 text-white border-slate-700 animate-in fade-in slide-in-from-bottom-2">
+          <div className="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl shadow-2xl text-xs flex items-center gap-2.5 border bg-emerald-950 text-white border-emerald-700 animate-in fade-in slide-in-from-bottom-2">
             <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
             <span className="font-medium leading-relaxed">{toastMessage}</span>
           </div>
@@ -1264,7 +1386,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50 text-slate-900 font-sans">
+    <div className="min-h-screen flex flex-col bg-[#fafaf5] text-slate-900 font-sans">
       
       {/* Top Bar Header */}
       <Header
@@ -1289,11 +1411,14 @@ export default function App() {
         }}
         activeClassCount={activeClassCount}
         alertCount={alertCount}
+        pendingBapCount={pendingBapCount}
+        urgentCalibrationCount={urgentCalibrationCount}
         onOpenExportModal={() => setIsExportModalOpen(true)}
         onOpenBackupModal={() => setIsBackupModalOpen(true)}
         yudisiumCount={yudisiumList.filter(y => y.prodiId === selectedProdi.id).length}
         tuPendingCount={tuSuratList.filter(s => s.status !== 'Selesai & Diterbitkan' && s.status !== 'Ditolak').length}
         onOpenVerifikasiModal={() => setIsVerifikasiModalOpen(true)}
+        onShowToast={showToast}
       />
 
       {/* Main Content Area */}
@@ -1357,11 +1482,31 @@ export default function App() {
           />
         )}
 
+        {currentTab === 'terpadu_akademik' && (
+          <SistemTerpaduAkademikView
+            selectedProdi={selectedProdi}
+            mahasiswaList={mahasiswaList}
+            dosenList={dosenList}
+            jadwalList={jadwalList}
+            ruanganList={ruanganList}
+            tagihanList={tagihanList}
+            sidangList={sidangList}
+            kpList={kpList}
+            yudisiumList={yudisiumList}
+            skpiList={skpiList}
+            logPresensiList={logPresensiList}
+            peringatanList={peringatanList}
+            onNavigateTab={handleNavigateTab}
+            onShowToast={showToast}
+          />
+        )}
+
         {currentTab === 'siakad' && (
           <SiakadView
             selectedProdi={selectedProdi}
             mahasiswaList={mahasiswaList}
             dosenList={dosenList}
+            onSyncStudents={handleSyncSiakadStudents}
             onShowToast={showToast}
           />
         )}
@@ -1598,6 +1743,10 @@ export default function App() {
       <VerifikasiDokumenModal
         isOpen={isVerifikasiModalOpen}
         onClose={() => setIsVerifikasiModalOpen(false)}
+        currentUserEmail={currentUser?.email}
+        currentUserName={currentUser?.displayName}
+        selectedProdi={selectedProdi}
+        onShowToast={showToast}
       />
 
       {/* Early Warning System (EWS) Mahasiswa Kritis Audit Modal */}
@@ -1605,6 +1754,7 @@ export default function App() {
         isOpen={isEwsAuditModalOpen}
         onClose={() => setIsEwsAuditModalOpen(false)}
         selectedProdi={selectedProdi}
+        onShowToast={showToast}
       />
 
       {/* Audit Kehadiran Mendadak (Sidak Presensi Kelas) Modal */}

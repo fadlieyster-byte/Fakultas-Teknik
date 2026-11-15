@@ -15,8 +15,9 @@ import {
 } from 'lucide-react';
 import { AuthUser } from '../types/index';
 import { PREDEFINED_ACCOUNTS, PredefinedAccount, findUserByCredentials, mapFirebaseUserToAuthUser } from '../data/authUsersData';
-import { auth, googleProvider } from '../firebase';
+import { auth, createDriveWorkspaceProvider } from '../firebase';
 import { signInWithPopup } from 'firebase/auth';
+import { hydrateDriveAuthFromFirebaseResult } from '../utils/driveService';
 
 interface LoginViewProps {
   onLoginSuccess: (user: AuthUser) => void;
@@ -84,12 +85,14 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onShowToas
     }, 500);
   };
 
-  // Google Login via Firebase
+  // Google Login via Firebase + OAuth 2.0 Drive & Workspace Token Hydration (in-memory only)
   const handleGoogleSignIn = async () => {
     setErrorMessage(null);
     setIsGoogleLoading(true);
     try {
-      const result = await signInWithPopup(auth, googleProvider);
+      const provider = createDriveWorkspaceProvider();
+      const result = await signInWithPopup(auth, provider);
+      const driveSession = hydrateDriveAuthFromFirebaseResult(result);
       const fbUser = result.user;
       const mappedUser = mapFirebaseUserToAuthUser({
         uid: fbUser.uid,
@@ -99,11 +102,16 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onShowToas
       });
 
       if (rememberMe) {
+        // Store only non-sensitive profile metadata; OAuth access token remains strictly in memory
         localStorage.setItem('sikaprodi_auth_user', JSON.stringify(mappedUser));
       }
       onLoginSuccess(mappedUser);
       if (onShowToast) {
-        onShowToast(`Berhasil masuk dengan Akun Google: ${mappedUser.displayName}`);
+        onShowToast(
+          driveSession
+            ? `Berhasil masuk dengan Akun Google: ${mappedUser.displayName} (Token OAuth Google Drive aktif di memori)`
+            : `Berhasil masuk dengan Akun Google: ${mappedUser.displayName}`
+        );
       }
     } catch (err: any) {
       console.error('Google Sign-In Error:', err);
@@ -230,32 +238,32 @@ export const LoginView: React.FC<LoginViewProps> = ({ onLoginSuccess, onShowToas
               </div>
             )}
 
-            {/* 1. Google Sign-In Button */}
+            {/* 1. Google Sign-In Button (OAuth 2.0 + Google Drive Scopes) */}
             <button
               type="button"
               onClick={handleGoogleSignIn}
               disabled={isGoogleLoading || isLoading}
-              className="w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl font-semibold text-xs text-slate-900 bg-white hover:bg-slate-100 transition-all shadow-md hover:shadow-lg disabled:opacity-60 cursor-pointer"
+              className="gsi-material-button w-full flex items-center justify-center gap-3 py-3 px-4 rounded-xl font-medium text-[14px] text-[#1f1f1f] bg-white hover:bg-[#f8faff] border border-[#747775] transition-all shadow-md hover:shadow-lg disabled:opacity-60 cursor-pointer"
             >
-              <svg className="w-4 h-4" viewBox="0 0 24 24">
+              <svg className="w-[18px] h-[18px] shrink-0" viewBox="0 0 48 48" aria-hidden="true">
                 <path
-                  fill="#4285F4"
-                  d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"
+                  fill="#EA4335"
+                  d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"
                 />
                 <path
-                  fill="#34A853"
-                  d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
+                  fill="#4285F4"
+                  d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"
                 />
                 <path
                   fill="#FBBC05"
-                  d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z"
+                  d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"
                 />
                 <path
-                  fill="#EA4335"
-                  d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
+                  fill="#34A853"
+                  d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"
                 />
               </svg>
-              <span>{isGoogleLoading ? 'Menghubungkan ke Google...' : 'Masuk dengan Akun Google (SSO)'}</span>
+              <span>{isGoogleLoading ? 'Menghubungkan ke Google...' : 'Sign in with Google'}</span>
             </button>
 
             {/* Divider */}

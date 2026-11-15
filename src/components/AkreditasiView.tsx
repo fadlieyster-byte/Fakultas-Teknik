@@ -77,6 +77,7 @@ import { RasioDosenMahasiswaView } from './RasioDosenMahasiswaView';
 import { RpsUploadProdiProgressView } from './RpsUploadProdiProgressView';
 import { AiRpsEvaluatorPanel } from './AiRpsEvaluatorPanel';
 import { MatriksKualitasRpsHeatmap } from './MatriksKualitasRpsHeatmap';
+import { AkreditasiDashboardSection } from './AkreditasiDashboardSection';
 import { PrintableReport } from './PrintableReport';
 import { exportMatriksCplToExcel } from '../utils/exportHelper';
 import {
@@ -200,6 +201,7 @@ export const AkreditasiView: React.FC<AkreditasiViewProps> = ({
 }) => {
   const [activeSubTab, setActiveSubTab] = useState<
     | 'kriteria'
+    | 'akreditasi_dashboard'
     | 'proyeksi_akreditasi'
     | 'rasio_dosen_angkatan'
     | 'cpl_obe'
@@ -1897,6 +1899,19 @@ export const AkreditasiView: React.FC<AkreditasiViewProps> = ({
 
           <button
             type="button"
+            onClick={() => setActiveSubTab('akreditasi_dashboard')}
+            className={`py-3 flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              activeSubTab === 'akreditasi_dashboard'
+                ? 'border-emerald-700 text-emerald-800 font-bold'
+                : 'border-transparent hover:text-slate-900'
+            }`}
+          >
+            <BarChart3 className="w-4 h-4 text-emerald-600" />
+            <span>Akreditasi Dashboard, Tren Kelulusan &amp; Generate Borang</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveSubTab('proyeksi_akreditasi')}
             className={`py-3 flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
               activeSubTab === 'proyeksi_akreditasi'
@@ -2240,6 +2255,18 @@ export const AkreditasiView: React.FC<AkreditasiViewProps> = ({
           </button>
         </nav>
       </div>
+
+      {/* SUB-TAB: AKREDITASI DASHBOARD, TREN KELULUSAN & GENERATE DOKUMEN OTOMATIS */}
+      {activeSubTab === 'akreditasi_dashboard' && (
+        <AkreditasiDashboardSection
+          selectedProdi={selectedProdi}
+          borang={borang}
+          matrixCourses={prodiMatrixCourses}
+          activeCpls={activeCplsObe}
+          dosenList={dosenList}
+          onShowToast={onShowToast}
+        />
+      )}
 
       {/* SUB-TAB 1: 9 KRITERIA LAM-TEKNIK */}
       {activeSubTab === 'kriteria' && (

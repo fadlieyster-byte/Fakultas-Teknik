@@ -1,8 +1,17 @@
 @import "tailwindcss";
 
+:root {
+  --unbari-forest: #065f46;
+  --unbari-forest-dark: #064e3b;
+  --unbari-cream: #fafaf5;
+  --unbari-mint: #ecfdf5;
+  --unbari-mint-border: #d1fae5;
+}
+
 @layer base {
   body {
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background-color: var(--unbari-cream);
   }
 }
 

@@ -28,7 +28,10 @@ import {
   Award,
   Layers,
   ChevronRight,
-  HelpCircle
+  HelpCircle,
+  Upload,
+  ClipboardCheck,
+  X
 } from 'lucide-react';
 import { 
   LmsKelasKuliah, 
@@ -41,6 +44,9 @@ import {
 } from '../types';
 import { initialLmsKelasList } from '../data/mockLmsData';
 import { LmsPrintModal } from './LmsPrintModal';
+import { StandardKopSurat } from './StandardKopSurat';
+import { printDocumentElement } from '../utils/printHelper';
+import { logKaprodiActivity } from '../utils/activityLogHelper';
 import { hitungSkalaNilai, SKALA_NILAI_UNBARI, formatRentangNilai } from '../utils/gradeScaleHelper';
 
 interface LmsViewProps {
@@ -82,6 +88,20 @@ export const LmsView: React.FC<LmsViewProps> = ({
   const [isNewMeetingModalOpen, setIsNewMeetingModalOpen] = useState(false);
   const [editingGradeStudent, setEditingGradeStudent] = useState<LmsNilaiMahasiswa | null>(null);
   const [showSkalaNilaiModal, setShowSkalaNilaiModal] = useState(false);
+
+  // Centralized E-Learning Terintegrasi & Ekspor Kepatuhan LMS states
+  const [isQuickUploadOpen, setIsQuickUploadOpen] = useState(false);
+  const [uploadKelasId, setUploadKelasId] = useState<string>('');
+  const [uploadJenis, setUploadJenis] = useState<'materi' | 'kuis' | 'tugas'>('materi');
+  const [uploadPertemuanKe, setUploadPertemuanKe] = useState<number>(1);
+  const [uploadJudul, setUploadJudul] = useState<string>('');
+  const [uploadTipeFile, setUploadTipeFile] = useState<'PDF' | 'PPTX' | 'Video' | 'Link'>('PDF');
+  const [uploadFileMeta, setUploadFileMeta] = useState<{ name: string; size: string } | null>(null);
+  const [uploadCatatan, setUploadCatatan] = useState<string>('');
+  const [uploadBobot, setUploadBobot] = useState<number>(10);
+  const [uploadDeadline, setUploadDeadline] = useState<string>('2025-11-28 23:59 WIB');
+  const [isCompliancePdfModalOpen, setIsCompliancePdfModalOpen] = useState(false);
+  const compliancePrintRef = React.useRef<HTMLDivElement>(null);
 
   // Discussion state
   const [newDiscussionTitle, setNewDiscussionTitle] = useState('');
@@ -406,6 +426,136 @@ export const LmsView: React.FC<LmsViewProps> = ({
   const totalTasks = currentProdiKelas.reduce((acc, k) => acc + k.tugasList.length, 0);
   const totalStudentsEnrolled = currentProdiKelas.reduce((acc, k) => acc + k.pesertaCount, 0);
 
+  // Recap Kepatuhan LMS per Mata Kuliah (AMI)
+  const lmsComplianceRows = useMemo(() => {
+    return currentProdiKelas.map((k, idx) => {
+      const jumlahMateri = k.pertemuanList.reduce(
+        (acc, p) => acc + (p.materiList ? p.materiList.length : 0),
+        0
+      );
+      const jumlahKuis = k.tugasList.filter(t => t.tipe === 'Quiz Online').length;
+      const jumlahTugas = k.tugasList.filter(t => t.tipe !== 'Quiz Online').length;
+      const rpsPct = k.totalPertemuanTarget > 0
+        ? Math.min(100, Math.round((k.pertemuanSelesaiCount / k.totalPertemuanTarget) * 100))
+        : 0;
+      const skorMateri = Math.min(100, Math.round((jumlahMateri / Math.max(1, k.pertemuanSelesaiCount)) * 100));
+      const skorKepatuhan = Math.min(100, Math.round(rpsPct * 0.5 + skorMateri * 0.3 + (jumlahKuis + jumlahTugas > 0 ? 20 : 5)));
+      return {
+        no: idx + 1,
+        id: k.id,
+        kodeMK: k.kodeMK,
+        namaMK: k.namaMK,
+        kelas: k.kelas,
+        sks: k.sks,
+        dosenNama: k.dosenNama,
+        pertemuanSelesai: k.pertemuanSelesaiCount,
+        totalTarget: k.totalPertemuanTarget,
+        jumlahMateri,
+        jumlahKuis,
+        jumlahTugas,
+        skorKepatuhan,
+        statusAmi: skorKepatuhan >= 75 ? 'Patuh Standar AMI' : 'Perlu Kelengkapan'
+      };
+    });
+  }, [currentProdiKelas]);
+
+  const handleOpenQuickUpload = () => {
+    setUploadKelasId(activeKelas?.id || currentProdiKelas[0]?.id || '');
+    setIsQuickUploadOpen(true);
+  };
+
+  const handleQuickUploadSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const targetId = uploadKelasId || activeKelas?.id || currentProdiKelas[0]?.id;
+    const targetClass = kelasList.find(k => k.id === targetId);
+    if (!targetClass || !uploadJudul.trim()) return;
+
+    let updatedClass: LmsKelasKuliah = targetClass;
+    if (uploadJenis === 'materi') {
+      const targetMeetingExists = targetClass.pertemuanList.some(
+        p => p.pertemuanKe === uploadPertemuanKe
+      );
+      const newMateri = {
+        id: `mat-${Date.now()}`,
+        judul: uploadJudul.trim(),
+        tipe: uploadTipeFile,
+        fileUrl: '#uploaded-lms-file',
+        fileSize: uploadFileMeta?.size || '1.2 MB'
+      };
+
+      const nextPertemuanList = targetMeetingExists
+        ? targetClass.pertemuanList.map(p =>
+            p.pertemuanKe === uploadPertemuanKe
+              ? { ...p, materiList: [...(p.materiList || []), newMateri] }
+              : p
+          )
+        : [
+            ...targetClass.pertemuanList,
+            {
+              id: `p-${targetClass.id}-${Date.now()}`,
+              pertemuanKe: uploadPertemuanKe,
+              tanggal: new Date().toISOString().slice(0, 10),
+              topik: uploadJudul.trim(),
+              subTopik: uploadCatatan || 'Unggahan E-Learning Terintegrasi',
+              cpmkTarget: 'CPMK Terkait RPS OBE',
+              metode: 'Tatap Muka' as const,
+              status: 'Terjadwal' as const,
+              materiList: [newMateri],
+              kehadiranHadir: 0,
+              kehadiranSakit: 0,
+              kehadiranIzin: 0,
+              kehadiranAlpa: 0,
+              totalMahasiswa: targetClass.pesertaCount || 25
+            }
+          ].sort((a, b) => a.pertemuanKe - b.pertemuanKe);
+
+      updatedClass = {
+        ...targetClass,
+        pertemuanList: nextPertemuanList
+      };
+    } else {
+      const newTask: LmsTugas = {
+        id: `t-quick-${Date.now()}`,
+        judul: uploadJudul.trim(),
+        tipe: uploadJenis === 'kuis' ? 'Quiz Online' : 'Tugas Mandiri',
+        pertemuanKe: uploadPertemuanKe,
+        cpmk: 'CPMK-OBE Terintegrasi',
+        bobotPersen: uploadBobot,
+        deadline: uploadDeadline,
+        deskripsi:
+          uploadCatatan ||
+          `Evaluasi ${uploadJenis === 'kuis' ? 'Kuis Online' : 'Tugas Terstruktur'} diunggah melalui E-Learning Terintegrasi.`,
+        pengumpulanList: []
+      };
+      updatedClass = {
+        ...targetClass,
+        tugasList: [newTask, ...targetClass.tugasList]
+      };
+    }
+
+    const updatedAll = kelasList.map(k => (k.id === targetClass.id ? updatedClass : k));
+    saveKelasList(updatedAll);
+    setUploadJudul('');
+    setUploadCatatan('');
+    setUploadFileMeta(null);
+    setIsQuickUploadOpen(false);
+
+    logKaprodiActivity({
+      category: 'EXPORT_DOKUMEN',
+      actionTitle: `E-Learning Terintegrasi: Unggah ${uploadJenis.toUpperCase()} (${targetClass.kodeMK})`,
+      detail: `"${uploadJudul.trim()}" ditambahkan ke kelas ${targetClass.namaMK} (Pertemuan ${uploadPertemuanKe}).`,
+      actor: `Dosen/Kaprodi ${selectedProdi.singkatan}`,
+      prodiId: selectedProdi.id
+    });
+
+    if (onShowToast) {
+      onShowToast(
+        `${uploadJenis === 'materi' ? 'Materi Perkuliahan' : uploadJenis === 'kuis' ? 'Kuis' : 'Tugas'} "${uploadJudul.trim()}" berhasil dipublikasikan ke ${targetClass.namaMK}!`,
+        'success'
+      );
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Top Banner / Breadcrumb */}
@@ -433,8 +583,26 @@ export const LmsView: React.FC<LmsViewProps> = ({
           <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
+              onClick={handleOpenQuickUpload}
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+            >
+              <Upload className="w-4 h-4" />
+              <span>E-Learning: Upload Materi/Kuis/Tugas</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setIsCompliancePdfModalOpen(true)}
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
+            >
+              <ClipboardCheck className="w-4 h-4" />
+              <span>Ekspor Laporan Kepatuhan LMS (PDF)</span>
+            </button>
+
+            <button
+              type="button"
               onClick={() => setIsNewClassModalOpen(true)}
-              className="inline-flex items-center gap-2 px-3.5 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+              className="inline-flex items-center gap-2 px-3.5 py-2 bg-blue-700 hover:bg-blue-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
             >
               <Plus className="w-4 h-4" />
               <span>Buka Kelas Baru</span>
@@ -444,7 +612,7 @@ export const LmsView: React.FC<LmsViewProps> = ({
               <button
                 type="button"
                 onClick={() => setIsPrintModalOpen(true)}
-                className="inline-flex items-center gap-2 px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors"
+                className="inline-flex items-center gap-2 px-3.5 py-2 bg-slate-700 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-xs transition-colors cursor-pointer"
               >
                 <Printer className="w-4 h-4" />
                 <span>Cetak Dokumen A4 (DPNA / Jurnal)</span>
@@ -1887,6 +2055,327 @@ export const LmsView: React.FC<LmsViewProps> = ({
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition-colors"
               >
                 Tutup Pedoman
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: E-Learning Terintegrasi (Upload Materi / Kuis / Tugas Terpusat) */}
+      {/* ========================================================================= */}
+      {isQuickUploadOpen && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/65 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full p-6 space-y-4 border border-slate-200">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+              <div>
+                <h3 className="text-base font-bold text-slate-900">
+                  E-Learning Terintegrasi — Publikasi Materi, Kuis &amp; Tugas
+                </h3>
+                <p className="text-xs text-slate-500">
+                  Unggah langsung bahan ajar, kuis daring, atau tugas mahasiswa ke kelas LMS aktif.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsQuickUploadOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-700 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleQuickUploadSubmit} className="space-y-3 text-xs">
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Pilih Kelas Perkuliahan *</label>
+                <select
+                  value={uploadKelasId}
+                  onChange={e => setUploadKelasId(e.target.value)}
+                  required
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-slate-50 font-medium"
+                >
+                  {currentProdiKelas.map(k => (
+                    <option key={k.id} value={k.id}>
+                      {k.kodeMK} — {k.namaMK} ({k.kelas} · {k.dosenNama})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Jenis Konten</label>
+                  <select
+                    value={uploadJenis}
+                    onChange={e => setUploadJenis(e.target.value as 'materi' | 'kuis' | 'tugas')}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white font-semibold"
+                  >
+                    <option value="materi">Materi Perkuliahan</option>
+                    <option value="kuis">Kuis Interaktif</option>
+                    <option value="tugas">Tugas Mahasiswa</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="font-semibold text-slate-700 block mb-1">Pertemuan Ke-</label>
+                  <input
+                    type="number"
+                    min={1}
+                    max={16}
+                    value={uploadPertemuanKe}
+                    onChange={e => setUploadPertemuanKe(Number(e.target.value))}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono font-bold"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Judul Konten *</label>
+                <input
+                  type="text"
+                  required
+                  placeholder={
+                    uploadJenis === 'materi'
+                      ? 'cth: Modul 5 Analisis Struktur Rangka Batang'
+                      : uploadJenis === 'kuis'
+                      ? 'cth: Kuis Evaluasi CPMK-2 (15 Soal Pilihan Ganda)'
+                      : 'cth: Tugas Studi Kasus Lapangan & Laporan PDF'
+                  }
+                  value={uploadJudul}
+                  onChange={e => setUploadJudul(e.target.value)}
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200"
+                />
+              </div>
+
+              {uploadJenis === 'materi' ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Format Berkas</label>
+                    <select
+                      value={uploadTipeFile}
+                      onChange={e => setUploadTipeFile(e.target.value as 'PDF' | 'PPTX' | 'Video' | 'Link')}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 bg-white"
+                    >
+                      <option value="PDF">Dokumen PDF</option>
+                      <option value="PPTX">Slide Presentasi (PPTX)</option>
+                      <option value="Video">Rekaman Video</option>
+                      <option value="Link">Tautan Eksternal</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Pilih File Lokal</label>
+                    <input
+                      type="file"
+                      onChange={e => {
+                        const f = e.target.files?.[0];
+                        if (f) {
+                          setUploadFileMeta({
+                            name: f.name,
+                            size: `${Math.max(10, Math.round(f.size / 1024))} KB`
+                          });
+                          if (!uploadJudul) setUploadJudul(f.name);
+                        }
+                      }}
+                      className="w-full text-[11px] text-slate-600 file:mr-2 file:py-1.5 file:px-2.5 file:rounded-lg file:border-0 file:bg-emerald-50 file:text-emerald-800 file:font-bold"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Bobot Nilai (%)</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={40}
+                      value={uploadBobot}
+                      onChange={e => setUploadBobot(Number(e.target.value))}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono"
+                    />
+                  </div>
+                  <div>
+                    <label className="font-semibold text-slate-700 block mb-1">Batas Pengumpulan</label>
+                    <input
+                      type="text"
+                      value={uploadDeadline}
+                      onChange={e => setUploadDeadline(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-200 font-mono"
+                    />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <label className="font-semibold text-slate-700 block mb-1">Instruksi / Ringkasan</label>
+                <textarea
+                  rows={2}
+                  value={uploadCatatan}
+                  onChange={e => setUploadCatatan(e.target.value)}
+                  placeholder="Catatan tambahan atau tautan referensi perkuliahan..."
+                  className="w-full px-3 py-2 rounded-xl border border-slate-200"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-100">
+                <button
+                  type="button"
+                  onClick={() => setIsQuickUploadOpen(false)}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl font-medium cursor-pointer"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  className="inline-flex items-center gap-1.5 px-5 py-2 bg-emerald-700 hover:bg-emerald-800 text-white font-bold rounded-xl shadow-xs cursor-pointer"
+                >
+                  <Upload className="w-4 h-4" />
+                  <span>Publikasikan ke LMS</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* MODAL: Ekspor Laporan Kepatuhan LMS (Audit Mutu Internal / AMI PDF) */}
+      {/* ========================================================================= */}
+      {isCompliancePdfModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-4xl rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+            <div className="p-4 bg-slate-900 text-white flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-mono text-emerald-300 uppercase">
+                  Dokumen Bukti Pendukung Audit Mutu Internal (AMI) FT UNBARI
+                </div>
+                <h3 className="text-base font-bold mt-0.5">
+                  Ekspor Laporan Kepatuhan LMS — {selectedProdi.nama}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsCompliancePdfModalOpen(false)}
+                className="p-1.5 rounded-lg text-slate-300 hover:text-white hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto bg-slate-100">
+              <div
+                ref={compliancePrintRef}
+                className="bg-white p-8 shadow-sm border border-slate-200 mx-auto max-w-[210mm] text-slate-900 font-serif"
+              >
+                <StandardKopSurat
+                  prodiName={`PROGRAM STUDI ${selectedProdi.nama.toUpperCase()} (${selectedProdi.jenjang})`}
+                  subTitle="REKAPITULASI KEPATUHAN PEMBELAJARAN LMS — BUKTI PENDUKUNG AUDIT MUTU INTERNAL (AMI)"
+                  showQrCode={true}
+                  qrCodeUrl={`https://ft.unbari.ac.id/verify/LMS-AMI-${selectedProdi.id}-${new Date().toISOString().slice(0, 10)}`}
+                  qrBadgeText="AMI LMS"
+                />
+
+                <div className="text-center mb-5">
+                  <h4 className="text-sm font-bold uppercase tracking-wide underline">
+                    LAPORAN KEPATUHAN PENGISIAN MATERI, KUIS &amp; TUGAS LMS PER MATA KULIAH
+                  </h4>
+                  <p className="text-xs font-sans text-slate-700 mt-1">
+                    Tahun Akademik 2025/2026 Ganjil · Total Kelas Diaudit: <b>{lmsComplianceRows.length} Mata Kuliah</b>
+                  </p>
+                </div>
+
+                <table className="w-full border-collapse border border-slate-800 text-[11px] font-sans mb-6">
+                  <thead>
+                    <tr className="bg-slate-100">
+                      <th className="border border-slate-800 px-2 py-2 text-center w-8">No</th>
+                      <th className="border border-slate-800 px-2 py-2 text-left">Kode &amp; Mata Kuliah</th>
+                      <th className="border border-slate-800 px-2 py-2 text-left">Dosen Pengampu</th>
+                      <th className="border border-slate-800 px-2 py-2 text-center">Sesi RPS</th>
+                      <th className="border border-slate-800 px-2 py-2 text-center">Materi</th>
+                      <th className="border border-slate-800 px-2 py-2 text-center">Kuis</th>
+                      <th className="border border-slate-800 px-2 py-2 text-center">Tugas</th>
+                      <th className="border border-slate-800 px-2 py-2 text-right">Skor AMI</th>
+                      <th className="border border-slate-800 px-2 py-2 text-center">Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lmsComplianceRows.map(row => (
+                      <tr key={row.id}>
+                        <td className="border border-slate-800 px-2 py-1.5 text-center">{row.no}</td>
+                        <td className="border border-slate-800 px-2 py-1.5">
+                          <div className="font-bold">{row.kodeMK} ({row.kelas})</div>
+                          <div>{row.namaMK}</div>
+                        </td>
+                        <td className="border border-slate-800 px-2 py-1.5">{row.dosenNama}</td>
+                        <td className="border border-slate-800 px-2 py-1.5 text-center font-mono">
+                          {row.pertemuanSelesai}/{row.totalTarget}
+                        </td>
+                        <td className="border border-slate-800 px-2 py-1.5 text-center font-mono font-bold">
+                          {row.jumlahMateri} File
+                        </td>
+                        <td className="border border-slate-800 px-2 py-1.5 text-center font-mono font-bold">
+                          {row.jumlahKuis}
+                        </td>
+                        <td className="border border-slate-800 px-2 py-1.5 text-center font-mono font-bold">
+                          {row.jumlahTugas}
+                        </td>
+                        <td className="border border-slate-800 px-2 py-1.5 text-right font-mono font-bold">
+                          {row.skorKepatuhan}%
+                        </td>
+                        <td className="border border-slate-800 px-2 py-1.5 text-center font-bold">
+                          {row.statusAmi}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div className="grid grid-cols-2 gap-6 text-xs font-sans pt-3">
+                  <div>
+                    <p className="font-bold">Ringkasan Evaluasi Audit Mutu Internal (AMI):</p>
+                    <p className="text-[11px] text-slate-700 mt-1">
+                      Jumlah MK Patuh Standar (&ge;75%):{' '}
+                      <b>{lmsComplianceRows.filter(r => r.skorKepatuhan >= 75).length} dari {lmsComplianceRows.length} MK</b>.
+                      Total Materi Terunggah: <b>{lmsComplianceRows.reduce((s, r) => s + r.jumlahMateri, 0)} dokumen</b>,
+                      Kuis: <b>{lmsComplianceRows.reduce((s, r) => s + r.jumlahKuis, 0)}</b>,
+                      Tugas: <b>{lmsComplianceRows.reduce((s, r) => s + r.jumlahTugas, 0)}</b>.
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p>Jambi, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                    <p className="font-bold mt-1">Ketua Program Studi {selectedProdi.singkatan}</p>
+                    <div className="h-14" />
+                    <p className="font-bold underline">{selectedProdi.kaprodi}</p>
+                    <p className="text-[11px] font-mono">NIDN/NUPTK: {selectedProdi.nipKaprodi}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-200 bg-white flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setIsCompliancePdfModalOpen(false)}
+                className="px-4 py-2 text-xs font-semibold text-slate-700 border border-slate-300 rounded-xl hover:bg-slate-50 cursor-pointer"
+              >
+                Tutup
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  logKaprodiActivity({
+                    category: 'EXPORT_DOKUMEN',
+                    actionTitle: `Ekspor Laporan Kepatuhan LMS (${selectedProdi.singkatan})`,
+                    detail: `Mengunduh rekapitulasi PDF kepatuhan materi, kuis & tugas ${lmsComplianceRows.length} mata kuliah untuk bukti AMI.`,
+                    actor: `Kaprodi ${selectedProdi.singkatan}`,
+                    prodiId: selectedProdi.id
+                  });
+                  printDocumentElement(compliancePrintRef.current, {
+                    documentTitle: `Laporan_Kepatuhan_LMS_AMI_${selectedProdi.singkatan}`
+                  });
+                }}
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl cursor-pointer"
+              >
+                <Printer className="w-4 h-4" />
+                <span>Unduh / Cetak PDF Kepatuhan LMS</span>
               </button>
             </div>
           </div>

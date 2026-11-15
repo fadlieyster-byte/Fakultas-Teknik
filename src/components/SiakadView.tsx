@@ -25,7 +25,9 @@ import {
   Zap,
   Sparkles,
   Info,
-  RotateCcw
+  RotateCcw,
+  RefreshCw,
+  DatabaseZap
 } from 'lucide-react';
 import { 
   ProgramStudiInfo, 
@@ -58,6 +60,7 @@ interface SiakadViewProps {
   selectedProdi: ProgramStudiInfo;
   mahasiswaList: Mahasiswa[];
   dosenList: Dosen[];
+  onSyncStudents?: (newStudents: Mahasiswa[]) => { added: number; updated: number };
   onShowToast: (message: string) => void;
 }
 
@@ -65,6 +68,7 @@ export const SiakadView: React.FC<SiakadViewProps> = ({
   selectedProdi,
   mahasiswaList,
   dosenList,
+  onSyncStudents,
   onShowToast
 }) => {
   // Navigation Sub-Tabs
@@ -180,6 +184,139 @@ export const SiakadView: React.FC<SiakadViewProps> = ({
   const [selectedSemesterFilter, setSelectedSemesterFilter] = useState<number>(0);
   const [isRemedialOption, setIsRemedialOption] = useState<boolean>(selectedSemesterType === 'Pendek');
   const [nilaiAsalInput, setNilaiAsalInput] = useState<string>('C');
+  const [isSyncingSiakad, setIsSyncingSiakad] = useState(false);
+  const [lastSiakadSyncResult, setLastSiakadSyncResult] = useState<{
+    waktu: string;
+    added: number;
+    updated: number;
+    khsSynced: number;
+  } | null>(null);
+
+  const handleSinkronisasiDataSiakad = () => {
+    setIsSyncingSiakad(true);
+    setTimeout(() => {
+      const angkatanBaru = 2026;
+      const prefixNim = selectedProdi.id === 'SIPIL' ? '261001121' : selectedProdi.id === 'LINGKUNGAN' ? '261001131' : '260501141';
+      const defaultDosenPa = dosenList.find(d => d.prodiId === selectedProdi.id)?.namaLengkap || selectedProdi.kaprodi;
+
+      const pulledStudents: Mahasiswa[] = [
+        {
+          id: `SIAKAD-${selectedProdi.id}-01`,
+          nim: `${prefixNim}091`,
+          nama: selectedProdi.id === 'SIPIL' ? 'Nabila Putri Ananda' : selectedProdi.id === 'LINGKUNGAN' ? 'Rafi Akbar Maulana' : 'Teguh Santoso',
+          prodiId: selectedProdi.id,
+          programStudi: selectedProdi.nama,
+          jenjang: selectedProdi.jenjang,
+          angkatan: angkatanBaru,
+          semester: 1,
+          ipk: 3.68,
+          sksLulus: 20,
+          sksSemesterIni: 20,
+          sksTargetLulus: selectedProdi.jenjang === 'D3' ? 110 : 144,
+          status: 'Aktif',
+          dosenPA: defaultDosenPa,
+          email: `${prefixNim}091@mhs.unbari.ac.id`,
+          nomorHp: '081278901234',
+          kehadiranPersen: 96,
+          konsentrasi: selectedProdi.id === 'SIPIL' ? 'Struktur & Transportasi' : selectedProdi.id === 'LINGKUNGAN' ? 'Teknologi Air & Limbah' : 'Otomasi & Distribusi',
+          fotoUrl: 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=120&auto=format&fit=crop',
+          peringatanSp: 0
+        },
+        {
+          id: `SIAKAD-${selectedProdi.id}-02`,
+          nim: `${prefixNim}092`,
+          nama: selectedProdi.id === 'SIPIL' ? 'Bayu Setiawan Pratama' : selectedProdi.id === 'LINGKUNGAN' ? 'Siti Nurhaliza Putri' : 'Bagus Kurniawan',
+          prodiId: selectedProdi.id,
+          programStudi: selectedProdi.nama,
+          jenjang: selectedProdi.jenjang,
+          angkatan: angkatanBaru - 1,
+          semester: 3,
+          ipk: 3.45,
+          sksLulus: 62,
+          sksSemesterIni: 22,
+          sksTargetLulus: selectedProdi.jenjang === 'D3' ? 110 : 144,
+          status: 'Aktif',
+          dosenPA: defaultDosenPa,
+          email: `${prefixNim}092@mhs.unbari.ac.id`,
+          nomorHp: '081345678910',
+          kehadiranPersen: 93,
+          konsentrasi: selectedProdi.id === 'SIPIL' ? 'Geoteknik & Sumber Daya Air' : selectedProdi.id === 'LINGKUNGAN' ? 'AMDAL & GIS' : 'Energi Terbarukan',
+          fotoUrl: 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=120&auto=format&fit=crop',
+          peringatanSp: 0
+        }
+      ];
+
+      const syncSummary = onSyncStudents ? onSyncStudents(pulledStudents) : { added: pulledStudents.length, updated: 0 };
+
+      // Also pull KHS histories into khsRecords
+      const newKhsEntries: KhsRecord[] = pulledStudents.map(st => ({
+        id: `KHS-SYNC-${st.nim}`,
+        nim: st.nim,
+        namaMahasiswa: st.nama,
+        prodiId: selectedProdi.id,
+        programStudi: selectedProdi.nama,
+        semester: st.semester,
+        semesterAkademik: currentPeriodeInfo.nama,
+        tipeSemester: selectedSemesterType,
+        sksSemester: 20,
+        sksKumulatif: st.sksLulus,
+        ips: st.ipk,
+        ipk: st.ipk,
+        dosenPA: st.dosenPA,
+        items: [
+          {
+            id: `ITEM-${st.nim}-1`,
+            kodeMK: selectedProdi.id === 'SIPIL' ? 'SPL-101' : selectedProdi.id === 'LINGKUNGAN' ? 'LKG-101' : 'LST-101',
+            namaMK: 'Matematika Teknik Terapan',
+            sks: 3,
+            kehadiran: 95,
+            tugas: 88,
+            uts: 85,
+            uas: 86,
+            nilaiAkhir: 86,
+            hurufMutu: 'A',
+            bobot: 4.0,
+            mutu: 12,
+            statusLulus: 'Lulus'
+          },
+          {
+            id: `ITEM-${st.nim}-2`,
+            kodeMK: selectedProdi.id === 'SIPIL' ? 'SPL-102' : selectedProdi.id === 'LINGKUNGAN' ? 'LKG-102' : 'LST-102',
+            namaMK: 'Fisika Rekayasa & Laboratorium',
+            sks: 3,
+            kehadiran: 92,
+            tugas: 84,
+            uts: 80,
+            uas: 81,
+            nilaiAkhir: 81,
+            hurufMutu: 'A-',
+            bobot: 3.7,
+            mutu: 11.1,
+            statusLulus: 'Lulus'
+          }
+        ]
+      }));
+
+      setKhsRecords(prev => {
+        const filtered = prev.filter(k => !newKhsEntries.some(nk => nk.nim === k.nim));
+        const next = [...newKhsEntries, ...filtered];
+        localStorage.setItem('siakad_unbari_khs_v2', JSON.stringify(next));
+        return next;
+      });
+
+      setSelectedNim(pulledStudents[0].nim);
+      setIsSyncingSiakad(false);
+      setLastSiakadSyncResult({
+        waktu: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+        added: syncSummary.added,
+        updated: syncSummary.updated,
+        khsSynced: newKhsEntries.length
+      });
+      onShowToast(
+        `Sinkronisasi Data SIAKAD berhasil: ${syncSummary.added} mahasiswa baru (${pulledStudents.map(s => s.nama).join(', ')}) beserta KHS masuk ke sistem!`
+      );
+    }, 650);
+  };
 
   // Filter & Pencarian Kurikulum Tab
   const [kurikulumSemesterFilter, setKurikulumSemesterFilter] = useState<number>(0);
@@ -352,6 +489,15 @@ export const SiakadView: React.FC<SiakadViewProps> = ({
           <div className="flex flex-wrap items-center gap-2 shrink-0">
             <button
               type="button"
+              onClick={handleSinkronisasiDataSiakad}
+              disabled={isSyncingSiakad}
+              className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-xl shadow-xs transition-colors disabled:opacity-60"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isSyncingSiakad ? 'animate-spin' : ''}`} />
+              <span>{isSyncingSiakad ? 'Menarik SIAKAD...' : 'Sinkronisasi Data SIAKAD'}</span>
+            </button>
+            <button
+              type="button"
               onClick={() => handleOpenPrint('KRS')}
               className="flex items-center gap-1.5 px-3 py-2 text-xs font-bold text-blue-950 bg-white hover:bg-blue-50 rounded-xl shadow-xs transition-colors"
             >
@@ -474,12 +620,38 @@ export const SiakadView: React.FC<SiakadViewProps> = ({
         </div>
       )}
 
+      {lastSiakadSyncResult && (
+        <div className="p-3.5 bg-[#ecfdf5] border border-emerald-300 rounded-xl text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+          <div className="flex items-center gap-2 text-emerald-950">
+            <DatabaseZap className="w-4 h-4 text-emerald-700 shrink-0" />
+            <span>
+              <strong>Sinkronisasi Data SIAKAD Selesai ({lastSiakadSyncResult.waktu}):</strong> {lastSiakadSyncResult.added} mahasiswa baru ditambahkan, {lastSiakadSyncResult.updated} data diperbarui, dan {lastSiakadSyncResult.khsSynced} riwayat KHS tersimpan otomatis.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={() => setLastSiakadSyncResult(null)}
+            className="text-[11px] font-semibold text-emerald-800 hover:underline self-start sm:self-center"
+          >
+            Tutup
+          </button>
+        </div>
+      )}
+
       {/* STUDENT SELECTOR STRIP (Quick Role Switcher) */}
       <div className="bg-white border border-slate-200 rounded-xl p-3.5 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
         <div className="flex items-center gap-2.5">
-          <div className="w-8 h-8 rounded-lg bg-blue-50 text-blue-700 flex items-center justify-center font-bold">
-            <UserCheck className="w-4 h-4" />
-          </div>
+          {currentStudent.fotoUrl ? (
+            <img
+              src={currentStudent.fotoUrl}
+              alt={currentStudent.nama}
+              className="w-9 h-9 rounded-full object-cover border border-emerald-300 shrink-0"
+            />
+          ) : (
+            <div className="w-9 h-9 rounded-lg bg-emerald-50 text-emerald-700 flex items-center justify-center font-bold shrink-0">
+              <UserCheck className="w-4 h-4" />
+            </div>
+          )}
           <div>
             <span className="text-slate-500 block text-[11px]">Mahasiswa Terpilih ({selectedProdi.singkatan}):</span>
             <strong className="text-slate-900 font-bold text-xs">{currentStudent.nama} ({currentStudent.nim})</strong>

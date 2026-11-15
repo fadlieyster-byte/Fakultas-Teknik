@@ -82,6 +82,7 @@ export const MatriksCplCpmkView: React.FC<MatriksCplCpmkViewProps> = ({
   const [internalKelompokFilter, setInternalKelompokFilter] = useState<'ALL' | 'Wajib' | 'Pilihan'>('ALL');
   const [kategoriFilter, setKategoriFilter] = useState<string>('ALL');
   const [activeCplFilter, setActiveCplFilter] = useState<string>('ALL');
+  const [standardMode, setStandardMode] = useState<'LAM_TEKNIK' | 'IABEE'>('LAM_TEKNIK');
   const [isConfirmReset, setIsConfirmReset] = useState(false);
 
   const semesterFilter = controlledSemesterFilter ?? internalSemesterFilter;
@@ -438,43 +439,71 @@ export const MatriksCplCpmkView: React.FC<MatriksCplCpmkViewProps> = ({
           </div>
         </div>
 
-        {/* Legend Indicator & Department Selector */}
-        <div className="mt-6 pt-5 border-t border-slate-800/80 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-          {/* Prodi Switcher */}
-          <div className="flex items-center gap-1.5 bg-slate-800/80 p-1 rounded-xl border border-slate-700 text-xs">
-            <button
-              type="button"
-              onClick={() => setCurrentProdiId('SIPIL')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-                currentProdiId === 'SIPIL'
-                  ? 'bg-blue-600 text-white shadow-xs'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-              }`}
-            >
-              S1 Teknik Sipil
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentProdiId('LINGKUNGAN')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-                currentProdiId === 'LINGKUNGAN'
-                  ? 'bg-emerald-600 text-white shadow-xs'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-              }`}
-            >
-              S1 Teknik Lingkungan
-            </button>
-            <button
-              type="button"
-              onClick={() => setCurrentProdiId('LISTRIK_D3')}
-              className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
-                currentProdiId === 'LISTRIK_D3'
-                  ? 'bg-amber-600 text-white shadow-xs'
-                  : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
-              }`}
-            >
-              D3 Teknik Listrik
-            </button>
+        {/* Legend Indicator, Accreditation Standard Mode Switcher & Department Selector */}
+        <div className="mt-6 pt-5 border-t border-slate-800/80 flex flex-col xl:flex-row items-start xl:items-center justify-between gap-4">
+          <div className="flex flex-wrap items-center gap-3">
+            {/* Prodi Switcher */}
+            <div className="flex items-center gap-1.5 bg-slate-800/80 p-1 rounded-xl border border-slate-700 text-xs">
+              <button
+                type="button"
+                onClick={() => setCurrentProdiId('SIPIL')}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                  currentProdiId === 'SIPIL'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+                }`}
+              >
+                S1 Teknik Sipil
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentProdiId('LINGKUNGAN')}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                  currentProdiId === 'LINGKUNGAN'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+                }`}
+              >
+                S1 Teknik Lingkungan
+              </button>
+              <button
+                type="button"
+                onClick={() => setCurrentProdiId('LISTRIK_D3')}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all ${
+                  currentProdiId === 'LISTRIK_D3'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'text-slate-300 hover:text-white hover:bg-slate-700/50'
+                }`}
+              >
+                D3 Teknik Listrik
+              </button>
+            </div>
+
+            {/* Interactive Accreditation Standard Mode Switcher: LAM-Teknik vs IABEE */}
+            <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-emerald-500/40 text-xs">
+              <button
+                type="button"
+                onClick={() => setStandardMode('LAM_TEKNIK')}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                  standardMode === 'LAM_TEKNIK'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                Standar LAM-Teknik
+              </button>
+              <button
+                type="button"
+                onClick={() => setStandardMode('IABEE')}
+                className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                  standardMode === 'IABEE'
+                    ? 'bg-indigo-600 text-white shadow-xs'
+                    : 'text-slate-300 hover:text-white'
+                }`}
+              >
+                Standar IABEE (SO a–k)
+              </button>
+            </div>
           </div>
 
           {/* Level Legend */}
@@ -518,10 +547,11 @@ export const MatriksCplCpmkView: React.FC<MatriksCplCpmkViewProps> = ({
 
         {/* CPL Grid Cards */}
         <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2.5">
-          {activeCpls.map(cpl => {
+          {activeCpls.map((cpl, idx) => {
             const stat = cplCoverageStats[cpl.kode] || { strong: 0, medium: 0, low: 0, totalMapped: 0, totalScore: 0 };
             const isOptimal = stat.strong >= 2;
             const isSelected = activeCplFilter === cpl.kode;
+            const iabeeRef = `IABEE SO-${String.fromCharCode(97 + idx)}`;
 
             return (
               <button
@@ -537,14 +567,16 @@ export const MatriksCplCpmkView: React.FC<MatriksCplCpmkViewProps> = ({
               >
                 <div>
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-black text-slate-900">{cpl.kode}</span>
+                    <span className="text-xs font-black text-slate-900">
+                      {standardMode === 'IABEE' ? `SO-${String.fromCharCode(65 + idx)}` : cpl.kode}
+                    </span>
                     <span className={`w-2 h-2 rounded-full ${isOptimal ? 'bg-emerald-500' : 'bg-amber-500'}`} />
                   </div>
                   <div className="text-[10px] font-bold text-slate-600 mt-0.5 line-clamp-1">
                     {cpl.judul}
                   </div>
                   <div className="text-[9px] text-slate-400 uppercase tracking-tight mt-0.5">
-                    {cpl.ranah}
+                    {standardMode === 'IABEE' ? `${cpl.kode} · ${iabeeRef}` : cpl.ranah}
                   </div>
                 </div>
 

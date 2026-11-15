@@ -52,6 +52,7 @@ import { BkdLldiktiPdfModal, BkdLldiktiDosenMetric } from './BkdLldiktiPdfModal'
 import { BkdHistorisSection } from './BkdHistorisSection';
 import { BkdBimbinganSection } from './BkdBimbinganSection';
 import { BkdMbkmIabeeSection } from './BkdMbkmIabeeSection';
+import { BkdAdvancedModulesSection } from './BkdAdvancedModulesSection';
 import { buildBkdAuditReport, BkdAuditItem } from '../utils/bkdAuditHelper';
 import { buildBkdMbkmIabeeReport } from '../utils/bkdMbkmIabeeHelper';
 import {
@@ -86,7 +87,7 @@ export const BkdDosenView: React.FC<BkdDosenViewProps> = ({
   kerjasamaList = INITIAL_KERJASAMA,
   onShowToast
 }) => {
-  const [activeTab, setActiveTab] = useState<'bkd' | 'audit' | 'bimbingan' | 'mbkm_iabee' | 'edom'>('bkd');
+  const [activeTab, setActiveTab] = useState<'bkd' | 'audit' | 'bimbingan' | 'mbkm_iabee' | 'manajemen_bkd' | 'edom'>('bkd');
   const [filterScope, setFilterScope] = useState<string>('current');
   const [workloadFilter, setWorkloadFilter] = useState<'ALL' | 'OVERLOAD' | 'COMPLIANT' | 'UNDERLOAD'>('ALL');
   const [auditFilter, setAuditFilter] = useState<
@@ -500,6 +501,19 @@ export const BkdDosenView: React.FC<BkdDosenViewProps> = ({
                 {mbkmIabeeOverloadCount} Overload
               </span>
             )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('manajemen_bkd')}
+            className={`pb-2 border-b-2 flex items-center gap-1.5 transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+              activeTab === 'manajemen_bkd'
+                ? 'border-emerald-700 text-emerald-800 font-bold'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            <FileDown className="w-4 h-4" />
+            <span>Kalkulator SKS, Repository &amp; Audit Kelengkapan</span>
           </button>
 
           <button
@@ -1814,6 +1828,27 @@ export const BkdDosenView: React.FC<BkdDosenViewProps> = ({
           jadwalList={jadwalList}
           kpList={kpList}
           kerjasamaList={kerjasamaList}
+          prodiLabel={
+            filterScope === 'all'
+              ? 'Fakultas Teknik UNBARI'
+              : filterScope === 'SIPIL'
+              ? 'S1 Teknik Sipil'
+              : filterScope === 'LINGKUNGAN'
+              ? 'S1 Teknik Lingkungan'
+              : filterScope === 'LISTRIK_D3'
+              ? 'D3 Teknik Listrik'
+              : selectedProdi.singkatan
+          }
+          onShowToast={onShowToast}
+        />
+      )}
+
+      {/* TAB 5: KALKULATOR SKS, REPOSITORY BERKAS, PLAGIARISME, AUTO BAP & AUDIT KELENGKAPAN WA */}
+      {activeTab === 'manajemen_bkd' && (
+        <BkdAdvancedModulesSection
+          dosenList={scopedDosen}
+          jadwalList={jadwalList}
+          selectedProdi={selectedProdi}
           prodiLabel={
             filterScope === 'all'
               ? 'Fakultas Teknik UNBARI'

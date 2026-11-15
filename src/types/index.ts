@@ -97,6 +97,7 @@ export interface Mahasiswa {
   dosenPembimbingTA?: string;
   progressTA?: 'Belum Mengambil' | 'Pengajuan Proposal' | 'Bimbingan Bab 1-3' | 'Seminar Hasil' | 'Sidang Meja Hijau' | 'Lulus Yudisium';
   catatanAkademik?: string;
+  fotoUrl?: string;
   peringatanSp: number; // 0: None, 1: SP1, 2: SP2, 3: SP3/Warning DO
 }
 
@@ -319,6 +320,7 @@ export interface YudisiumRecord {
   predikat: PredikatKelulusan;
   gelarLulusan: string; // 'S.T.' | 'A.Md.T.'
   tanggalYudisium: string; // YYYY-MM-DD
+  tahunAkademik?: string; // e.g. '2025/2026'
   nomorSkYudisium: string;
   nomorIjazahNasional: string; // PIN PDDikti
   nomorSeriIjazah: string;

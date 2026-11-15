@@ -18,7 +18,11 @@ import {
   FileText,
   X,
   Plus,
-  Minus
+  Minus,
+  MapPin,
+  Printer,
+  FileDown,
+  History
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -33,7 +37,11 @@ import {
   Cell
 } from 'recharts';
 import { RuanganLab, JadwalKuliah, ProgramStudiInfo } from '../types/index';
-import { isJadwalSedangBerlangsung } from '../utils/timeHelper';
+import {
+  isJadwalSedangBerlangsung,
+  hitungSisaWaktu,
+  timeStringToMinutes
+} from '../utils/timeHelper';
 import {
   buildIabeeCalibrationReportText,
   buildLabEquipmentAuditReport,
@@ -41,6 +49,9 @@ import {
   EquipmentCategory,
   EquipmentOverrideState
 } from '../utils/labEquipmentAuditHelper';
+import { StandardKopSurat } from './StandardKopSurat';
+import { printDocumentElement } from '../utils/printHelper';
+import { logKaprodiActivity } from '../utils/activityLogHelper';
 
 interface LaboratoriumViewProps {
   ruanganList: RuanganLab[];
@@ -71,8 +82,59 @@ export const LaboratoriumView: React.FC<LaboratoriumViewProps> = ({
   >({});
   const [dismissedAlertKey, setDismissedAlertKey] = useState<string | null>(null);
   const [showAutoReportModal, setShowAutoReportModal] = useState(false);
+  const [showLabAuditReportModal, setShowLabAuditReportModal] = useState(false);
+  const [selectedFloor, setSelectedFloor] = useState<number>(1);
+  const [hoveredRoomId, setHoveredRoomId] = useState<string | null>(null);
+  const [calibrationLogs, setCalibrationLogs] = useState<
+    Array<{
+      id: string;
+      equipmentId: string;
+      namaAlat: string;
+      kodeBmn: string;
+      ruanganKode: string;
+      tanggalKalibrasi: string;
+      lembagaPengkalibrasi: string;
+      nomorSertifikat: string;
+      hasil: 'Lulus Toleransi' | 'Dijadwalkan Ulang';
+      teknisi: string;
+    }>
+  >(() => {
+    try {
+      const saved = localStorage.getItem('sikaprodi_v15_lab_calibration_logs');
+      if (saved) return JSON.parse(saved);
+    } catch {
+      // ignore
+    }
+    return [
+      {
+        id: 'cal-log-1',
+        equipmentId: 'eq-civil-utm',
+        namaAlat: 'Universal Testing Machine (UTM 1000 kN)',
+        kodeBmn: '3.08.01.02.004',
+        ruanganKode: 'LAB-STRUKTUR',
+        tanggalKalibrasi: '2025-10-18',
+        lembagaPengkalibrasi: 'Balai Kalibrasi KAN Prov. Jambi',
+        nomorSertifikat: 'CERT-KAN/JMB/2025-881',
+        hasil: 'Lulus Toleransi',
+        teknisi: 'Ir. H. Suryadi, S.T. (Teknisi Madya)'
+      },
+      {
+        id: 'cal-log-2',
+        equipmentId: 'eq-env-spektro',
+        namaAlat: 'Spektrofotometer UV-Vis & COD Reactor',
+        kodeBmn: '3.08.02.05.012',
+        ruanganKode: 'LAB-LINGKUNGAN',
+        tanggalKalibrasi: '2025-09-29',
+        lembagaPengkalibrasi: 'UPT Lab Lingkungan DLH Jambi',
+        nomorSertifikat: 'CERT-DLH/LAB/2025-402',
+        hasil: 'Lulus Toleransi',
+        teknisi: 'Rina Kusuma, S.T. (Laboran Kimia)'
+      }
+    ];
+  });
 
   const lastToastKeyRef = useRef<string>('');
+  const labAuditPrintRef = useRef<HTMLDivElement>(null);
 
   const scopedRuanganForAudit = useMemo(() => {
     return ruanganList.filter(r => {
@@ -257,7 +319,34 @@ export const LaboratoriumView: React.FC<LaboratoriumViewProps> = ({
     }
   };
 
+  const availableFloors = useMemo(() => {
+    const set = new Set<number>();
+    scopedRuanganForAudit.forEach(r => set.add(r.lantai || 1));
+    const arr = Array.from(set).sort((a, b) => a - b);
+    return arr.length > 0 ? arr : [1];
+  }, [scopedRuanganForAudit]);
+
+  const floorRooms = useMemo(() => {
+    const rooms = scopedRuanganForAudit.filter(r => (r.lantai || 1) === selectedFloor);
+    return rooms.length > 0 ? rooms : scopedRuanganForAudit;
+  }, [scopedRuanganForAudit, selectedFloor]);
+
+  const monthlyLabAuditRows = useMemo(() => {
+    return roomUtilizationData.map((r, idx) => {
+      const jamPerBulan = Number((r.jamTerpakai * 4).toFixed(1));
+      const sesiAktif = jadwalList.filter(j => j.ruanganId === r.id).length;
+      return {
+        ...r,
+        no: idx + 1,
+        jamPerBulan,
+        sesiAktif,
+        targetBulan: 160
+      };
+    });
+  }, [roomUtilizationData, jadwalList]);
+
   const handleScheduleCalibration = (equipmentId: string, namaAlat: string) => {
+    const eq = auditReport.allEquipments.find(e => e.id === equipmentId);
     setEquipmentOverrides(prev => ({
       ...prev,
       [equipmentId]: {
@@ -265,10 +354,85 @@ export const LaboratoriumView: React.FC<LaboratoriumViewProps> = ({
         statusKalibrasiDijadwalkan: true
       }
     }));
+
+    const newLog = {
+      id: `cal-log-${Date.now()}`,
+      equipmentId,
+      namaAlat,
+      kodeBmn: eq?.kodeAsetBmn || '-',
+      ruanganKode: eq?.ruanganId || 'LAB-FT',
+      tanggalKalibrasi: new Date().toISOString().slice(0, 10),
+      lembagaPengkalibrasi: 'Vendor Terakreditasi KAN & Tim Teknis FT UNBARI',
+      nomorSertifikat: `SCHED-${new Date().getFullYear()}-${String(calibrationLogs.length + 1).padStart(3, '0')}`,
+      hasil: 'Dijadwalkan Ulang' as const,
+      teknisi: `Koord. Lab ${selectedProdi.singkatan}`
+    };
+    const nextLogs = [newLog, ...calibrationLogs];
+    setCalibrationLogs(nextLogs);
+    try {
+      localStorage.setItem('sikaprodi_v15_lab_calibration_logs', JSON.stringify(nextLogs));
+    } catch {
+      // ignore
+    }
+    logKaprodiActivity({
+      category: 'EXPORT_DOKUMEN',
+      actionTitle: `Penjadwalan Kalibrasi Lab: ${namaAlat}`,
+      detail: `Menjadwalkan kalibrasi ulang perangkat ${namaAlat} (${eq?.kodeAsetBmn || '-'}) pada ${prodiScopeLabel}.`,
+      actor: `Kaprodi ${selectedProdi.singkatan}`,
+      prodiId: selectedProdi.id,
+      severity: 'warning'
+    });
+
     if (onShowToast) {
       onShowToast(
-        `Maintenance Trigger: Kalibrasi ulang untuk "${namaAlat}" berhasil dijadwalkan ke vendor KAN & Teknisi Lab.`
+        `Maintenance Trigger: Kalibrasi ulang untuk "${namaAlat}" berhasil dijadwalkan & dicatat ke Log Audit Kalibrasi.`
       );
+    }
+  };
+
+  const handleExportLabAuditCsv = () => {
+    const headers = [
+      'No',
+      'Kode Ruang',
+      'Nama Laboratorium / Ruang',
+      'Tipe',
+      'Kapasitas',
+      'Sesi Terjadwal/Minggu',
+      'Jam Terpakai/Minggu',
+      'Estimasi Durasi Bulanan (Jam)',
+      'Target Operasional/Bulan (Jam)',
+      'Utilitas (%)',
+      'Status Efisiensi'
+    ];
+    const rows = monthlyLabAuditRows.map(row =>
+      [
+        row.no,
+        row.kode,
+        row.namaLengkap,
+        row.tipe,
+        row.kapasitas,
+        row.sesiAktif,
+        row.jamTerpakai,
+        row.jamPerBulan,
+        row.targetBulan,
+        `${row.utilitasPersen}%`,
+        row.statusEfisiensi
+      ]
+        .map(v => `"${String(v).replace(/"/g, '""')}"`)
+        .join(',')
+    );
+    const csv = '\uFEFF' + [headers.join(','), ...rows].join('\r\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `Laporan_Audit_Lab_${selectedProdi.id}_${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+    if (onShowToast) {
+      onShowToast(`Laporan Audit Laboratorium CSV (${prodiScopeLabel}) berhasil diunduh.`);
     }
   };
 
@@ -317,6 +481,15 @@ export const LaboratoriumView: React.FC<LaboratoriumViewProps> = ({
             <span className="text-xs font-mono tabular-nums text-emerald-800 bg-emerald-50 border border-emerald-200 px-3 py-1.5 rounded-lg whitespace-nowrap shrink-0">
               Skor IABEE: {auditReport.avgIabeeScore}/100
             </span>
+
+            <button
+              type="button"
+              onClick={() => setShowLabAuditReportModal(true)}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-lg transition-colors whitespace-nowrap shrink-0 cursor-pointer"
+            >
+              <Printer className="w-3.5 h-3.5" />
+              <span>Laporan Audit Lab (PDF)</span>
+            </button>
           </div>
         </div>
 
@@ -616,6 +789,142 @@ export const LaboratoriumView: React.FC<LaboratoriumViewProps> = ({
             </div>
           </div>
 
+          {/* VISUALISASI PETA LANTAI (FLOOR PLAN LAYOUT) */}
+          <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs space-y-4">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-slate-100">
+              <div className="flex items-start gap-2.5">
+                <div className="p-2 rounded-lg bg-emerald-50 text-emerald-700 mt-0.5">
+                  <MapPin className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-slate-900">
+                    Visualisasi Peta Lantai (Floor Plan Layout) — Gedung FT UNBARI
+                  </h3>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Peta spasial okupansi real-time per lantai. Arahkan kursor atau klik unit ruang untuk melihat detail perkuliahan &amp; sisa waktu.
+                  </p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1.5 bg-slate-100 p-1 rounded-lg text-xs self-start sm:self-center">
+                {availableFloors.map(floor => (
+                  <button
+                    key={floor}
+                    type="button"
+                    onClick={() => setSelectedFloor(floor)}
+                    className={`px-3 py-1 rounded-md font-bold transition-colors whitespace-nowrap shrink-0 cursor-pointer ${
+                      selectedFloor === floor
+                        ? 'bg-emerald-700 text-white shadow-xs'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    Lantai {floor}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Interactive Floor Blueprint */}
+            <div className="relative bg-slate-50/80 border border-slate-200 rounded-xl p-4 space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-600 pb-2 border-b border-dashed border-slate-300">
+                <span className="font-mono font-bold text-slate-700 uppercase">
+                  DENAH LANTAI {selectedFloor} · KORIDOR TEKNIK ({floorRooms.length} RUANG TERPETA)
+                </span>
+                <div className="flex items-center gap-4">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-xs bg-blue-600 inline-block" /> Terpakai
+                  </span>
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="w-2.5 h-2.5 rounded-xs bg-emerald-600 inline-block" /> Tersedia
+                  </span>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+                {floorRooms.map((ruang, idx) => {
+                  const activeCls = jadwalList.find(
+                    j => j.ruanganId === ruang.id && isJadwalSedangBerlangsung(j, currentDay, currentTimeStr)
+                  );
+                  const isUsed = !!activeCls || ruang.statusSaatIni === 'Terpakai';
+                  const isHovered = hoveredRoomId === ruang.id;
+                  const sisaLabel = activeCls
+                    ? hitungSisaWaktu(activeCls, currentTimeStr)
+                    : ruang.jadwalAktifSaatIni
+                    ? 'Sesi Aktif Berjalan'
+                    : 'Siap Digunakan';
+
+                  return (
+                    <div
+                      key={ruang.id}
+                      onMouseEnter={() => setHoveredRoomId(ruang.id)}
+                      onMouseLeave={() => setHoveredRoomId(null)}
+                      onClick={() => setHoveredRoomId(isHovered ? null : ruang.id)}
+                      className={`relative rounded-xl border-2 p-3.5 transition-all cursor-pointer ${
+                        isUsed
+                          ? 'bg-blue-50/80 border-blue-400 hover:bg-blue-100/70'
+                          : 'bg-emerald-50/70 border-emerald-400 hover:bg-emerald-100/60'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-[11px] font-black text-slate-800">
+                          BAY {idx + 1} · {ruang.kode}
+                        </span>
+                        <span
+                          className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                            isUsed ? 'bg-blue-700 text-white' : 'bg-emerald-700 text-white'
+                          }`}
+                        >
+                          {isUsed ? 'Terpakai' : 'Tersedia'}
+                        </span>
+                      </div>
+                      <div className="text-xs font-bold text-slate-900 mt-1.5 line-clamp-1">
+                        {ruang.nama}
+                      </div>
+                      <div className="text-[11px] font-mono text-slate-600 mt-1 flex items-center justify-between">
+                        <span>Kap: {ruang.kapasitas}</span>
+                        <span className={isUsed ? 'text-blue-800 font-bold' : 'text-emerald-800'}>
+                          {sisaLabel}
+                        </span>
+                      </div>
+
+                      {/* Hover Tooltip Detail Card */}
+                      {isHovered && (
+                        <div className="mt-2.5 pt-2.5 border-t border-slate-200/80 bg-white/95 rounded-lg p-2.5 text-[11px] shadow-md space-y-1">
+                          <div className="font-bold text-slate-900">{ruang.nama}</div>
+                          {activeCls ? (
+                            <>
+                              <div className="text-blue-800 font-semibold">
+                                {activeCls.namaMK} ({activeCls.kelas})
+                              </div>
+                              <div className="text-slate-600">Dosen: {activeCls.dosenNama}</div>
+                              <div className="font-mono text-slate-700">
+                                {activeCls.jamMulai}–{activeCls.jamSelesai} WIB · <b>{sisaLabel}</b>
+                              </div>
+                            </>
+                          ) : ruang.jadwalAktifSaatIni ? (
+                            <>
+                              <div className="text-blue-800 font-semibold">
+                                {ruang.jadwalAktifSaatIni.matakuliah} ({ruang.jadwalAktifSaatIni.kelas})
+                              </div>
+                              <div className="text-slate-600">Dosen: {ruang.jadwalAktifSaatIni.dosen}</div>
+                              <div className="font-mono text-slate-700">
+                                {ruang.jadwalAktifSaatIni.jam} WIB
+                              </div>
+                            </>
+                          ) : (
+                            <div className="text-emerald-700 font-medium">
+                              Ruang kosong &amp; tersedia untuk praktikum, riset dosen, atau responsi mahasiswa.
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+
           {/* Room Cards Grid */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             {filteredRuangan.map(ruang => {
@@ -679,25 +988,53 @@ export const LaboratoriumView: React.FC<LaboratoriumViewProps> = ({
                       )}
                     </div>
 
-                    {activeClass ? (
-                      <div className="mt-3 p-3 bg-blue-50/70 border border-blue-200 rounded-lg text-xs space-y-1">
-                        <div className="font-semibold text-blue-900">
-                          {activeClass.namaMK} ({activeClass.kelas})
+                    {activeClass ? (() => {
+                      const sisaWaktuText = hitungSisaWaktu(activeClass, currentTimeStr);
+                      const startMin = timeStringToMinutes(activeClass.jamMulai);
+                      const endMin = timeStringToMinutes(activeClass.jamSelesai);
+                      const curMin = timeStringToMinutes(currentTimeStr);
+                      const totalDur = Math.max(1, endMin - startMin);
+                      const elapsed = Math.min(totalDur, Math.max(0, curMin - startMin));
+                      const progressPct = Math.round((elapsed / totalDur) * 100);
+                      return (
+                        <div className="mt-3 p-3 bg-blue-50/70 border border-blue-200 rounded-lg text-xs space-y-1.5">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="font-semibold text-blue-900">
+                              {activeClass.namaMK} ({activeClass.kelas})
+                            </div>
+                            <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-700 text-white whitespace-nowrap shrink-0 tabular-nums">
+                              Sisa: {sisaWaktuText}
+                            </span>
+                          </div>
+                          <div className="text-slate-600 text-[11px]">
+                            Dosen: <span className="font-medium text-slate-800">{activeClass.dosenNama}</span>
+                          </div>
+                          <div className="font-mono text-[11px] text-blue-700 flex items-center justify-between gap-1">
+                            <span className="flex items-center gap-1">
+                              <Clock className="w-3 h-3" />
+                              <span>
+                                {activeClass.jamMulai} - {activeClass.jamSelesai} WIB
+                              </span>
+                            </span>
+                            <span className="text-[10px] font-bold tabular-nums">{progressPct}% berlalu</span>
+                          </div>
+                          <div className="w-full h-1.5 bg-blue-100 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-blue-600 rounded-full transition-all duration-500 ease-out"
+                              style={{ width: `${progressPct}%` }}
+                            />
+                          </div>
                         </div>
-                        <div className="text-slate-600 text-[11px]">
-                          Dosen: <span className="font-medium text-slate-800">{activeClass.dosenNama}</span>
-                        </div>
-                        <div className="font-mono text-[11px] text-blue-700 flex items-center gap-1">
-                          <Clock className="w-3 h-3" />
-                          <span>
-                            {activeClass.jamMulai} - {activeClass.jamSelesai} WIB
+                      );
+                    })() : ruang.jadwalAktifSaatIni ? (
+                      <div className="mt-3 p-3 bg-blue-50/70 border border-blue-200 rounded-lg text-xs space-y-1.5">
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="font-semibold text-blue-900">
+                            {ruang.jadwalAktifSaatIni.matakuliah} ({ruang.jadwalAktifSaatIni.kelas})
+                          </div>
+                          <span className="font-mono text-[10px] font-bold px-1.5 py-0.5 rounded bg-blue-700 text-white whitespace-nowrap shrink-0">
+                            Sedang Berlangsung
                           </span>
-                        </div>
-                      </div>
-                    ) : ruang.jadwalAktifSaatIni ? (
-                      <div className="mt-3 p-3 bg-blue-50/70 border border-blue-200 rounded-lg text-xs space-y-1">
-                        <div className="font-semibold text-blue-900">
-                          {ruang.jadwalAktifSaatIni.matakuliah} ({ruang.jadwalAktifSaatIni.kelas})
                         </div>
                         <div className="text-slate-600 text-[11px]">
                           Dosen:{' '}
@@ -1294,6 +1631,71 @@ export const LaboratoriumView: React.FC<LaboratoriumViewProps> = ({
               </table>
             </div>
           </div>
+
+          {/* Log Audit Kalibrasi & Pemeliharaan Alat Laboratorium */}
+          <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-xs">
+            <div className="p-4 sm:p-5 border-b border-slate-100 flex items-center justify-between gap-3">
+              <div className="flex items-start gap-2.5">
+                <History className="w-5 h-5 text-emerald-700 shrink-0 mt-0.5" />
+                <div>
+                  <h2 className="text-sm sm:text-base font-bold text-slate-900">
+                    Log Audit Kalibrasi &amp; Inventarisasi Sertifikat Laboratorium
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Rekam jejak riwayat kalibrasi instrumen ukur teknik, nomor sertifikat KAN/Internal, dan jadwal tindak lanjut teknisi.
+                  </p>
+                </div>
+              </div>
+              <span className="text-xs font-mono font-bold text-slate-600 tabular-nums">
+                {calibrationLogs.length} Catatan
+              </span>
+            </div>
+
+            <div className="overflow-x-auto">
+              <table className="w-full text-left border-collapse text-xs">
+                <thead>
+                  <tr className="bg-slate-50 border-b border-slate-200 text-slate-600">
+                    <th className="py-3 px-4 font-semibold">Tanggal</th>
+                    <th className="py-3 px-3 font-semibold">Instrumen &amp; Kode BMN</th>
+                    <th className="py-3 px-3 font-semibold">Lab</th>
+                    <th className="py-3 px-3 font-semibold">Lembaga / Nomor Sertifikat</th>
+                    <th className="py-3 px-3 font-semibold">Penanggung Jawab</th>
+                    <th className="py-3 px-4 font-semibold">Hasil Audit</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {calibrationLogs.map(log => (
+                    <tr key={log.id} className="hover:bg-slate-50/80">
+                      <td className="py-3 px-4 font-mono tabular-nums text-slate-700 whitespace-nowrap">
+                        {log.tanggalKalibrasi}
+                      </td>
+                      <td className="py-3 px-3">
+                        <div className="font-bold text-slate-900">{log.namaAlat}</div>
+                        <div className="font-mono text-[11px] text-slate-500">{log.kodeBmn}</div>
+                      </td>
+                      <td className="py-3 px-3 font-mono text-[11px] text-slate-700">{log.ruanganKode}</td>
+                      <td className="py-3 px-3">
+                        <div className="text-slate-800 font-medium">{log.lembagaPengkalibrasi}</div>
+                        <div className="font-mono text-[11px] text-slate-500">{log.nomorSertifikat}</div>
+                      </td>
+                      <td className="py-3 px-3 text-slate-700">{log.teknisi}</td>
+                      <td className="py-3 px-4">
+                        <span
+                          className={`inline-block px-2 py-0.5 text-[11px] font-bold rounded border whitespace-nowrap ${
+                            log.hasil === 'Lulus Toleransi'
+                              ? 'bg-emerald-50 text-emerald-800 border-emerald-200'
+                              : 'bg-blue-50 text-blue-800 border-blue-200'
+                          }`}
+                        >
+                          {log.hasil}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
         </div>
       )}
 
@@ -1342,6 +1744,147 @@ export const LaboratoriumView: React.FC<LaboratoriumViewProps> = ({
                 <Copy className="w-3.5 h-3.5" />
                 <span>Salin Laporan ke Clipboard</span>
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL LAPORAN AUDIT LABORATORIUM (PDF A4 KOP SURAT + CSV) */}
+      {showLabAuditReportModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/75 backdrop-blur-xs flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white w-full max-w-4xl rounded-2xl border border-slate-200 shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
+            <div className="p-4 bg-emerald-900 text-white flex items-center justify-between gap-3">
+              <div>
+                <div className="text-[11px] font-mono text-emerald-200 uppercase">
+                  Audit Okupansi &amp; Durasi Penggunaan Bulanan Fasilitas Laboratorium
+                </div>
+                <h3 className="text-base font-bold mt-0.5">
+                  Laporan Audit Laboratorium — {prodiScopeLabel}
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLabAuditReportModal(false)}
+                className="p-1.5 rounded-lg text-emerald-100 hover:text-white hover:bg-emerald-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="p-6 overflow-y-auto bg-slate-100">
+              <div
+                ref={labAuditPrintRef}
+                className="bg-white p-8 shadow-sm border border-slate-200 mx-auto max-w-[210mm] text-slate-900 font-serif"
+              >
+                <StandardKopSurat
+                  prodiName={`PROGRAM STUDI ${selectedProdi.nama.toUpperCase()} (${selectedProdi.jenjang})`}
+                  subTitle="REKAPITULASI AUDIT OKUPANSI & DURASI PENGGUNAAN LABORATORIUM BULANAN"
+                  showQrCode={true}
+                  qrCodeUrl={`https://ft.unbari.ac.id/verify/LAB-AUDIT-${selectedProdi.id}-${new Date().toISOString().slice(0, 7)}`}
+                  qrBadgeText="AUDIT LAB"
+                />
+
+                <div className="text-center mb-5">
+                  <h4 className="text-sm font-bold uppercase tracking-wide underline">
+                    LAPORAN AUDIT PEMANFAATAN FASILITAS LABORATORIUM &amp; BENGKEL
+                  </h4>
+                  <p className="text-xs text-slate-700 mt-1 font-sans">
+                    Cakupan: <b>{prodiScopeLabel}</b> · Periode Bulan Berjalan (Estimasi 4 Minggu Akademik / 160 Jam Operasional)
+                  </p>
+                </div>
+
+                <table className="w-full border-collapse border border-slate-800 text-[11px] font-sans mb-6">
+                  <thead>
+                    <tr className="bg-slate-100">
+                      <th className="border border-slate-800 px-2 py-2 text-center w-8">No</th>
+                      <th className="border border-slate-800 px-2 py-2 text-left">Kode &amp; Nama Laboratorium</th>
+                      <th className="border border-slate-800 px-2 py-2 text-center">Kap.</th>
+                      <th className="border border-slate-800 px-2 py-2 text-center">Sesi/Mgg</th>
+                      <th className="border border-slate-800 px-2 py-2 text-right">Jam/Mgg</th>
+                      <th className="border border-slate-800 px-2 py-2 text-right">Durasi/Bulan</th>
+                      <th className="border border-slate-800 px-2 py-2 text-right">Utilitas</th>
+                      <th className="border border-slate-800 px-2 py-2 text-center">Efisiensi</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {monthlyLabAuditRows.map(row => (
+                      <tr key={row.id}>
+                        <td className="border border-slate-800 px-2 py-1.5 text-center">{row.no}</td>
+                        <td className="border border-slate-800 px-2 py-1.5">
+                          <div className="font-bold">{row.kode}</div>
+                          <div>{row.namaLengkap}</div>
+                        </td>
+                        <td className="border border-slate-800 px-2 py-1.5 text-center font-mono">{row.kapasitas}</td>
+                        <td className="border border-slate-800 px-2 py-1.5 text-center font-mono">{row.sesiAktif}</td>
+                        <td className="border border-slate-800 px-2 py-1.5 text-right font-mono">{row.jamTerpakai} Jam</td>
+                        <td className="border border-slate-800 px-2 py-1.5 text-right font-mono font-bold">
+                          {row.jamPerBulan} Jam
+                        </td>
+                        <td className="border border-slate-800 px-2 py-1.5 text-right font-mono font-bold">
+                          {row.utilitasPersen}%
+                        </td>
+                        <td className="border border-slate-800 px-2 py-1.5 text-center">{row.statusEfisiensi}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+
+                <div className="grid grid-cols-2 gap-6 text-xs font-sans pt-4">
+                  <div>
+                    <p>Catatan Audit Kesiapan Perangkat:</p>
+                    <p className="text-[11px] text-slate-700 mt-1">
+                      Kesiapan Perangkat Lab: <b>{auditReport.overallAvailabilityPercent}% Siap</b> · Rata-rata Utilitas:{' '}
+                      <b>{rataRataUtilitas}%</b> · Rata-rata Skor IABEE: <b>{auditReport.avgIabeeScore}/100</b>.
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <p>Jambi, {new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' })}</p>
+                    <p className="font-bold mt-1">Ketua Program Studi {selectedProdi.singkatan}</p>
+                    <div className="h-14" />
+                    <p className="font-bold underline">{selectedProdi.kaprodi}</p>
+                    <p className="text-[11px] font-mono">NIDN/NUPTK: {selectedProdi.nipKaprodi}</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="p-4 border-t border-slate-200 bg-white flex flex-wrap items-center justify-between gap-2">
+              <button
+                type="button"
+                onClick={handleExportLabAuditCsv}
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-bold text-slate-800 bg-slate-100 hover:bg-slate-200 border border-slate-300 rounded-xl cursor-pointer"
+              >
+                <FileDown className="w-4 h-4" />
+                <span>Unduh Rekap CSV</span>
+              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowLabAuditReportModal(false)}
+                  className="px-4 py-2 text-xs font-semibold text-slate-700 border border-slate-300 rounded-xl hover:bg-slate-50 cursor-pointer"
+                >
+                  Tutup
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    logKaprodiActivity({
+                      category: 'EXPORT_DOKUMEN',
+                      actionTitle: `Ekspor Laporan Audit Laboratorium (${selectedProdi.singkatan})`,
+                      detail: `Mencetak dokumen PDF Audit Okupansi Bulanan ${monthlyLabAuditRows.length} ruangan lab/bengkel.`,
+                      actor: `Kaprodi ${selectedProdi.singkatan}`,
+                      prodiId: selectedProdi.id
+                    });
+                    printDocumentElement(labAuditPrintRef.current, {
+                      documentTitle: `Laporan_Audit_Laboratorium_${selectedProdi.singkatan}`
+                    });
+                  }}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-white bg-emerald-700 hover:bg-emerald-800 rounded-xl cursor-pointer"
+                >
+                  <Printer className="w-4 h-4" />
+                  <span>Cetak / Simpan PDF A4</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>

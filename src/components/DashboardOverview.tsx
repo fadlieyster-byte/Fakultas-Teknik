@@ -64,7 +64,23 @@ import {
   CPL_DEFINITIONS_PRODI,
   INITIAL_CPL_CPMK_MATRIX_DATA
 } from '../data/mockCplCpmkMatrixData';
+import {
+  Bar,
+  BarChart,
+  CartesianGrid,
+  Cell,
+  Legend,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis
+} from 'recharts';
 import { buildCplCompletenessAuditReport } from '../utils/cplCompletenessAuditHelper';
+import { IkuCommandCenter } from './IkuCommandCenter';
+import { DashboardTracerFeedbackSection } from './DashboardTracerFeedbackSection';
+import { DashboardMeetingsActivitySection } from './DashboardMeetingsActivitySection';
 
 
 interface DashboardOverviewProps {
@@ -474,6 +490,110 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
       return true;
     }).sort((a, b) => a.tanggalMulai.localeCompare(b.tanggalMulai));
   }, [combinedAgendaList, scopeFilter, selectedProdi.id, selectedAgendaRentang, selectedAgendaKategori, agendaSearchQuery]);
+
+  // 1. Widget Ringkasan Progres Kerjasama Prodi (Aktif vs Sudah Berakhir by MoU/MoA/IA)
+  const kerjasamaProgressData = React.useMemo(() => {
+    const types: Array<'MoU' | 'MoA' | 'IA'> = ['MoU', 'MoA', 'IA'];
+    return types.map(jenis => {
+      const subset = displayKerjasama.filter(k => k.jenisDokumen === jenis);
+      const aktif = subset.filter(k => k.status === 'Aktif' || k.status === 'Mendekati Berakhir').length;
+      const berakhir = subset.filter(k => k.status === 'Kedaluwarsa').length;
+      return {
+        jenis,
+        Aktif: aktif,
+        'Sudah Berakhir': berakhir
+      };
+    });
+  }, [displayKerjasama]);
+
+  // 2. Analisis Kinerja Dosen (Distribusi Kehadiran 30 Hari Terakhir: Hadir, Izin, Terlambat)
+  const dosen30DayAttendanceData = React.useMemo(() => {
+    const scopedLogs = logPresensiList.filter(l =>
+      scopeFilter === 'prodi' ? l.prodiId === selectedProdi.id : true
+    );
+    const hadir = scopedLogs.filter(l => l.statusKehadiran === 'Hadir Tepat Waktu').length;
+    const terlambat = scopedLogs.filter(l => l.statusKehadiran === 'Hadir Terlambat').length;
+    const izin =
+      scopedLogs.filter(
+        l => l.statusKehadiran === 'Diganti / Kuliah Pengganti' || l.statusKehadiran === 'Ditiadakan'
+      ).length + displayDosen.filter(d => d.statusRealTime === 'Izin / Tugas Luar').length;
+
+    const total = hadir + terlambat + izin;
+    if (total === 0) {
+      return [
+        { name: 'Hadir Tepat Waktu', value: 42, color: '#065f46' },
+        { name: 'Izin / Tugas Luar', value: 5, color: '#d97706' },
+        { name: 'Terlambat', value: 3, color: '#dc2626' }
+      ];
+    }
+    return [
+      { name: 'Hadir Tepat Waktu', value: hadir, color: '#065f46' },
+      { name: 'Izin / Tugas Luar', value: izin, color: '#d97706' },
+      { name: 'Terlambat', value: terlambat, color: '#dc2626' }
+    ];
+  }, [logPresensiList, displayDosen, scopeFilter, selectedProdi.id]);
+
+  // 3. Monitor Durasi Mengajar Real-time vs Target SKS Mingguan
+  const teachingDurationMonitors = React.useMemo(() => {
+    return displayDosen.slice(0, 6).map(dosen => {
+      const targetMenit = Math.max(100, dosen.totalSksMengajar * 50);
+      const dosenLogs = logPresensiList.filter(
+        l => l.dosenNidn === dosen.nidn || l.dosenNama === dosen.namaLengkap
+      );
+      const recordedMenit = dosenLogs.reduce((acc, l) => acc + (l.durasiMenit || 0), 0);
+      const activeMatch = activeClasses.filter(
+        c => c.dosenNidn === dosen.nidn || c.dosenNama === dosen.namaLengkap
+      );
+      const liveBonusMenit = activeMatch.reduce((acc, c) => acc + c.sks * 35, 0);
+      const actualMenit =
+        recordedMenit > 0
+          ? recordedMenit + liveBonusMenit
+          : Math.round((dosen.kehadiranBapPersen / 100) * targetMenit);
+      const progressPct = Math.min(100, Math.round((actualMenit / targetMenit) * 100));
+
+      return {
+        id: dosen.id,
+        nama: dosen.namaLengkap,
+        sks: dosen.totalSksMengajar,
+        actualMenit,
+        targetMenit,
+        progressPct,
+        isLiveNow: activeMatch.length > 0
+      };
+    });
+  }, [displayDosen, logPresensiList, activeClasses]);
+
+  // 4. Kalender Akademik Terintegrasi (Countdown UTS, UAS, Batas Akhir Input Nilai Dosen)
+  const academicMilestonesCountdown = React.useMemo(() => {
+    const baseNow = new Date();
+    const buildMilestone = (
+      id: string,
+      judul: string,
+      offsetDays: number,
+      keterangan: string,
+      tone: 'emerald' | 'amber' | 'rose'
+    ) => {
+      const d = new Date(baseNow.getFullYear(), baseNow.getMonth(), baseNow.getDate() + offsetDays);
+      return {
+        id,
+        judul,
+        daysLeft: offsetDays,
+        tanggalStr: d.toLocaleDateString('id-ID', {
+          day: 'numeric',
+          month: 'short',
+          year: 'numeric'
+        }),
+        keterangan,
+        tone
+      };
+    };
+
+    return [
+      buildMilestone('uts', 'Ujian Tengah Semester (UTS)', 14, 'Verifikasi soal & kesiapan ruang ujian prodi', 'emerald'),
+      buildMilestone('uas', 'Ujian Akhir Semester (UAS)', 56, 'Target penyelesaian 16 pertemuan & BAP 100%', 'amber'),
+      buildMilestone('nilai', 'Batas Akhir Input Nilai Dosen', 65, 'Sinkronisasi DPNA & KHS ke portal SIAKAD', 'rose')
+    ];
+  }, []);
 
   return (
     <div className="space-y-6">
@@ -1400,6 +1520,203 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         onUpdateDosenStatus={onUpdateDosenStatus}
       />
 
+      {/* 4 Executive Overview Analytics Widgets */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        {/* Widget 1: Ringkasan Progres Kerjasama Prodi (BarChart Aktif vs Sudah Berakhir) */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+            <div className="flex items-center gap-2">
+              <Handshake className="w-4 h-4 text-[#065f46]" />
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">
+                  Ringkasan Progres Kerjasama Prodi ({scopeFilter === 'prodi' ? selectedProdi.singkatan : 'FT UNBARI'})
+                </h2>
+                <p className="text-[11px] text-slate-500">
+                  Perbandingan naskah Aktif vs Sudah Berakhir kategori MoU, MoA &amp; IA.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigateTab('kerjasama')}
+              className="text-xs font-semibold text-[#065f46] hover:underline cursor-pointer"
+            >
+              Kelola &rarr;
+            </button>
+          </div>
+          <div className="h-[220px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={kerjasamaProgressData} margin={{ top: 8, right: 12, left: -16, bottom: 4 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                <XAxis dataKey="jenis" tick={{ fontSize: 12, fontWeight: 700, fill: '#0f172a' }} />
+                <YAxis allowDecimals={false} tick={{ fontSize: 11, fill: '#475569' }} />
+                <Tooltip contentStyle={{ borderRadius: 10, fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+                <Bar dataKey="Aktif" fill="#065f46" radius={[4, 4, 0, 0]} />
+                <Bar dataKey="Sudah Berakhir" fill="#dc2626" radius={[4, 4, 0, 0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Widget 2: Analisis Kinerja Dosen (PieChart 30 Hari Terakhir) */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+            <div className="flex items-center gap-2">
+              <UserCheck className="w-4 h-4 text-[#065f46]" />
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">
+                  Analisis Kinerja &amp; Kehadiran Dosen (30 Hari Terakhir)
+                </h2>
+                <p className="text-[11px] text-slate-500">
+                  Distribusi status perkuliahan: Hadir Tepat Waktu, Izin / Tugas Luar &amp; Terlambat.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigateTab('jadwal')}
+              className="text-xs font-semibold text-[#065f46] hover:underline cursor-pointer"
+            >
+              Presensi &rarr;
+            </button>
+          </div>
+          <div className="h-[220px] w-full">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={dosen30DayAttendanceData}
+                  dataKey="value"
+                  nameKey="name"
+                  cx="50%"
+                  cy="45%"
+                  innerRadius={45}
+                  outerRadius={74}
+                  paddingAngle={3}
+                >
+                  {dosen30DayAttendanceData.map((entry, idx) => (
+                    <Cell key={`att-${idx}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={{ borderRadius: 10, fontSize: 12 }} />
+                <Legend wrapperStyle={{ fontSize: 11 }} />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        {/* Widget 3: Monitor Durasi Mengajar Real-time vs Target SKS */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-[#065f46]" />
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">
+                  Monitor Durasi Mengajar Real-time vs Target SKS Mingguan
+                </h2>
+                <p className="text-[11px] text-slate-500">
+                  Standar LLDIKTI 50 menit tatap muka per SKS per minggu untuk {displayDosen.length} dosen.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigateTab('bkd')}
+              className="text-xs font-semibold text-[#065f46] hover:underline cursor-pointer"
+            >
+              Audit BKD &rarr;
+            </button>
+          </div>
+          <div className="space-y-3">
+            {teachingDurationMonitors.map(row => (
+              <div key={row.id} className="space-y-1">
+                <div className="flex items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <span className="font-semibold text-slate-900 truncate">{row.nama}</span>
+                    {row.isLiveNow && (
+                      <span className="px-1.5 py-0.2 rounded bg-emerald-100 text-emerald-900 text-[9px] font-bold">
+                        LIVE
+                      </span>
+                    )}
+                  </div>
+                  <span className="font-mono font-bold text-slate-700 tabular-nums shrink-0">
+                    {row.actualMenit} / {row.targetMenit} mnt ({row.sks} SKS)
+                  </span>
+                </div>
+                <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-500 ${
+                      row.progressPct >= 85
+                        ? 'bg-[#065f46]'
+                        : row.progressPct >= 60
+                        ? 'bg-amber-500'
+                        : 'bg-rose-600'
+                    }`}
+                    style={{ width: `${row.progressPct}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Widget 4: Kalender Akademik Terintegrasi (Countdown UTS, UAS & Batas Input Nilai) */}
+        <div className="bg-white border border-slate-200 rounded-2xl p-5 shadow-xs">
+          <div className="flex items-center justify-between pb-3 border-b border-slate-100 mb-3">
+            <div className="flex items-center gap-2">
+              <CalendarDays className="w-4 h-4 text-[#065f46]" />
+              <div>
+                <h2 className="text-sm font-bold text-slate-900">
+                  Kalender Akademik Terintegrasi (Countdown Tenggat Kritis)
+                </h2>
+                <p className="text-[11px] text-slate-500">
+                  Hitung mundur agenda wajib Semester Ganjil TA 2026/2027.
+                </p>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onNavigateTab('siakad')}
+              className="text-xs font-semibold text-[#065f46] hover:underline cursor-pointer"
+            >
+              SIAKAD &rarr;
+            </button>
+          </div>
+          <div className="space-y-3">
+            {academicMilestonesCountdown.map(ms => (
+              <div
+                key={ms.id}
+                className="flex items-center justify-between gap-3 p-3 rounded-xl bg-[#fafaf5] border border-slate-200"
+              >
+                <div>
+                  <div className="text-xs font-bold text-slate-900">{ms.judul}</div>
+                  <div className="text-[11px] text-slate-600 mt-0.5">{ms.keterangan}</div>
+                  <div className="text-[10px] font-mono text-slate-500 mt-0.5">
+                    Jadwal Resmi: {ms.tanggalStr}
+                  </div>
+                </div>
+                <div
+                  className={`shrink-0 text-center px-3 py-2 rounded-xl border min-w-[78px] ${
+                    ms.tone === 'emerald'
+                      ? 'bg-[#ecfdf5] border-emerald-300 text-[#065f46]'
+                      : ms.tone === 'amber'
+                      ? 'bg-amber-50 border-amber-300 text-amber-900'
+                      : 'bg-rose-50 border-rose-300 text-rose-900'
+                  }`}
+                >
+                  <div className="text-lg font-extrabold font-mono leading-none tabular-nums">
+                    H-{ms.daysLeft}
+                  </div>
+                  <div className="text-[9px] font-bold uppercase tracking-wider mt-1">
+                    Hari Lagi
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
       {/* Main Grid: Active Classes Live Now + Early Warning Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
@@ -2311,6 +2628,27 @@ export const DashboardOverview: React.FC<DashboardOverviewProps> = ({
         </div>
 
       </div>
+
+      {/* Dashboard Eksekutif 8 IKU, Heatmap Bulanan & Semesteran, Radar Drill-Down & Target Management */}
+      <IkuCommandCenter
+        selectedProdi={selectedProdi}
+        scopeFilter={scopeFilter}
+        onShowToast={onShowToast}
+      />
+
+      {/* Feedback Mahasiswa & Dosen (Google Forms) + Dashboard Tracer Study (Google Sheets & Dual PDF) */}
+      <DashboardTracerFeedbackSection
+        selectedProdi={selectedProdi}
+        scopeFilter={scopeFilter}
+        onShowToast={onShowToast}
+      />
+
+      {/* Sistem Pengingat Otomatis Action Items Rapat + Notulensi Rapat + Log Aktivitas Kaprodi */}
+      <DashboardMeetingsActivitySection
+        selectedProdi={selectedProdi}
+        scopeFilter={scopeFilter}
+        onShowToast={onShowToast}
+      />
 
       {/* Dekanat Fakultas Teknik UNBARI Leadership Section */}
       <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-xs">

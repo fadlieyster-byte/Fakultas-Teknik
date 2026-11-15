@@ -41,6 +41,31 @@ interface EvaluateRpsRequestBody {
   customRpsText?: string;
 }
 
+interface WhatsAppRecipientInput {
+  nim: string;
+  nama: string;
+  prodi?: string;
+  angkatan?: number;
+  semester?: number;
+  batasSemester?: number;
+  phone: string;
+  message: string;
+}
+
+interface WhatsAppDispatchRequestBody {
+  recipients?: WhatsAppRecipientInput[];
+  senderLabel?: string;
+}
+
+function normalizeIndonesianPhone(raw: string): string {
+  const digits = String(raw || '').replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('62')) return digits;
+  if (digits.startsWith('0')) return `62${digits.slice(1)}`;
+  if (digits.startsWith('8')) return `62${digits}`;
+  return digits;
+}
+
 function clampScore(value: unknown, fallback = 70): number {
   const num = Number(value);
   if (!Number.isFinite(num)) return fallback;
@@ -52,7 +77,152 @@ async function createApp() {
   app.use(express.json({ limit: '1mb' }));
 
   app.get('/api/health', (_req, res) => {
-    res.json({ ok: true, service: 'sikaprodi-ft-unbari' });
+    res.json({
+      ok: true,
+      service: 'sikaprodi-ft-unbari',
+      whatsappGatewayConfigured: Boolean(
+        process.env.WHATSAPP_API_URL && process.env.WHATSAPP_API_TOKEN
+      )
+    });
+  });
+
+  app.post('/api/notifications/whatsapp', async (req, res) => {
+    const body = (req.body || {}) as WhatsAppDispatchRequestBody;
+    const recipients = Array.isArray(body.recipients) ? body.recipients : [];
+
+    if (recipients.length === 0) {
+      res.status(400).json({
+        error: 'Daftar penerima notifikasi WhatsApp tidak boleh kosong.'
+      });
+      return;
+    }
+
+    if (recipients.length > 100) {
+      res.status(400).json({
+        error: 'Maksimal 100 penerima per pengiriman batch WhatsApp API.'
+      });
+      return;
+    }
+
+    const gatewayUrl = (process.env.WHATSAPP_API_URL || '').trim();
+    const gatewayToken = (process.env.WHATSAPP_API_TOKEN || '').trim();
+    const gatewayProvider = (process.env.WHATSAPP_PROVIDER || 'fonnte').trim().toLowerCase();
+    const gatewayConfigured = Boolean(gatewayUrl && gatewayToken);
+    const dispatchedAt = new Date().toISOString();
+
+    const results = await Promise.all(
+      recipients.map(async recipient => {
+        const normalizedPhone = normalizeIndonesianPhone(recipient.phone);
+        const message = String(recipient.message || '').trim();
+
+        if (!normalizedPhone || normalizedPhone.length < 10 || !message) {
+          return {
+            nim: recipient.nim,
+            nama: recipient.nama,
+            phoneNormalized: normalizedPhone,
+            status: 'failed' as const,
+            providerStatus: 'Nomor HP atau isi pesan tidak valid',
+            waMeUrl: '',
+            dispatchedAt
+          };
+        }
+
+        const waMeUrl = `https://wa.me/${normalizedPhone}?text=${encodeURIComponent(message)}`;
+
+        if (!gatewayConfigured) {
+          return {
+            nim: recipient.nim,
+            nama: recipient.nama,
+            phoneNormalized: normalizedPhone,
+            status: 'gateway_unconfigured' as const,
+            providerStatus:
+              'WHATSAPP_API_URL / WHATSAPP_API_TOKEN belum dikonfigurasi di server; tautan wa.me siap digunakan.',
+            waMeUrl,
+            dispatchedAt
+          };
+        }
+
+        try {
+          const payload =
+            gatewayProvider === 'meta'
+              ? {
+                  messaging_product: 'whatsapp',
+                  to: normalizedPhone,
+                  type: 'text',
+                  text: { body: message }
+                }
+              : {
+                  target: normalizedPhone,
+                  phone: normalizedPhone,
+                  message,
+                  sender: body.senderLabel || 'SIKAPRODI FT UNBARI'
+                };
+
+          const upstream = await fetch(gatewayUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization:
+                gatewayProvider === 'meta' ? `Bearer ${gatewayToken}` : gatewayToken
+            },
+            body: JSON.stringify(payload)
+          });
+
+          const rawResponse = await upstream.text().catch(() => '');
+          if (!upstream.ok) {
+            return {
+              nim: recipient.nim,
+              nama: recipient.nama,
+              phoneNormalized: normalizedPhone,
+              status: 'failed' as const,
+              providerStatus: `Gateway HTTP ${upstream.status}${
+                rawResponse ? `: ${rawResponse.slice(0, 120)}` : ''
+              }`,
+              waMeUrl,
+              dispatchedAt
+            };
+          }
+
+          return {
+            nim: recipient.nim,
+            nama: recipient.nama,
+            phoneNormalized: normalizedPhone,
+            status: 'sent' as const,
+            providerStatus: `Terkirim via ${gatewayProvider.toUpperCase()} API (HTTP ${upstream.status})`,
+            waMeUrl,
+            dispatchedAt
+          };
+        } catch (err: unknown) {
+          const errMsg = err instanceof Error ? err.message : 'Koneksi gateway gagal';
+          return {
+            nim: recipient.nim,
+            nama: recipient.nama,
+            phoneNormalized: normalizedPhone,
+            status: 'failed' as const,
+            providerStatus: errMsg,
+            waMeUrl,
+            dispatchedAt
+          };
+        }
+      })
+    );
+
+    const sentCount = results.filter(r => r.status === 'sent').length;
+    const readyFallbackCount = results.filter(
+      r => r.status === 'gateway_unconfigured'
+    ).length;
+    const failedCount = results.filter(r => r.status === 'failed').length;
+
+    res.json({
+      gatewayConfigured,
+      gatewayProvider: gatewayConfigured ? gatewayProvider : 'none',
+      totalRequested: recipients.length,
+      sentCount,
+      readyFallbackCount,
+      failedCount,
+      dispatchedAt,
+      results
+    });
   });
 
   app.post('/api/ai/evaluate-rps', async (req, res) => {

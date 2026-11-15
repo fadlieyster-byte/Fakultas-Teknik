@@ -21,9 +21,28 @@ import {
   AlertCircle,
   FileCheck2,
   FolderOpen,
-  MessageSquare
+  MessageSquare,
+  CalendarCheck2,
+  UserPlus,
+  HardDrive
 } from 'lucide-react';
 import { ProgramStudiInfo, Mahasiswa, Dosen, JadwalKuliah } from '../types/index';
+import {
+  listGoogleClassroomCourses,
+  createGoogleClassroomCourse,
+  postGoogleClassroomAnnouncement,
+  createGoogleClassroomCourseWork,
+  inviteStudentToGoogleClassroom,
+  syncJadwalToGoogleCalendar,
+  OFFICIAL_CLASSROOM_ADMIN_EMAIL
+} from '../utils/googleWorkspaceService';
+import { useDriveAuth } from '../hooks/useDriveAuth';
+import {
+  GoogleWorkspaceSignInCard,
+  WorkspaceMutationConfirmDialog
+} from './GoogleWorkspaceSignInCard';
+import { GoogleDriveManagerPanel } from './GoogleDriveManagerPanel';
+import { logKaprodiActivity } from '../utils/activityLogHelper';
 
 interface GoogleWorkspaceViewProps {
   selectedProdi: ProgramStudiInfo;
@@ -77,9 +96,36 @@ export const GoogleWorkspaceView: React.FC<GoogleWorkspaceViewProps> = ({
   jadwalList,
   onShowToast
 }) => {
-  const [activeTab, setActiveTab] = useState<'classroom' | 'forms'>('classroom');
+  const [activeTab, setActiveTab] = useState<'classroom' | 'drive' | 'forms'>('classroom');
   const [isSyncing, setIsSyncing] = useState(false);
+  const [isCalendarSyncing, setIsCalendarSyncing] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const {
+    session: workspaceSession,
+    sessionHint,
+    needsRefresh,
+    isExpiringSoon,
+    tokenRemainingMinutes,
+    isAuthenticating: isSigningIn,
+    signIn: signInWorkspaceOAuth,
+    refreshSession: refreshWorkspaceOAuth,
+    signOut: signOutWorkspaceOAuth
+  } = useDriveAuth({
+    defaultLoginHint: OFFICIAL_CLASSROOM_ADMIN_EMAIL
+  });
+  const [pendingMutationConfirm, setPendingMutationConfirm] = useState<{
+    title: string;
+    description: string;
+    actionLabel: string;
+    onConfirm: () => Promise<void> | void;
+  } | null>(null);
+  const [manualSyncReport, setManualSyncReport] = useState<{
+    ranAt: string;
+    syncedCourses: number;
+    missingSchedules: number;
+    invitedCount: number;
+    detail: string;
+  } | null>(null);
 
   // Modals
   const [showAnnouncementModal, setShowAnnouncementModal] = useState<ClassroomCourse | null>(null);
@@ -234,12 +280,212 @@ export const GoogleWorkspaceView: React.FC<GoogleWorkspaceViewProps> = ({
     }
   ]);
 
-  const handleSyncAll = () => {
-    setIsSyncing(true);
-    setTimeout(() => {
-      setIsSyncing(false);
-      onShowToast('Sinkronisasi Google Classroom & Google Forms berhasil diperbarui!', 'success');
-    }, 1200);
+  const handleSignInWorkspace = async () => {
+    try {
+      const session = await signInWorkspaceOAuth(OFFICIAL_CLASSROOM_ADMIN_EMAIL);
+      if (!session) return;
+      onShowToast(`Terhubung dengan Google Workspace (${session.userEmail})!`, 'success');
+      logKaprodiActivity({
+        actor: session.displayName,
+        role: 'Admin Google Workspace',
+        prodiId: selectedProdi.id,
+        category: 'SYNC_WORKSPACE',
+        actionTitle: 'Autentikasi Google Workspace OAuth Berhasil',
+        detail: `Menghubungkan sesi Classroom, Calendar, Drive, Forms, Sheets & Gmail melalui akun ${session.userEmail}.`,
+        severity: 'info'
+      });
+    } catch (err: any) {
+      onShowToast(err?.message || 'Gagal menghubungkan akun Google Workspace.', 'error');
+    }
+  };
+
+  const handleRefreshWorkspaceToken = async () => {
+    try {
+      const session = await refreshWorkspaceOAuth();
+      if (!session) return;
+      onShowToast(`Token OAuth 2.0 diperbarui (${session.userEmail}).`, 'success');
+    } catch (err: any) {
+      onShowToast(err?.message || 'Gagal memperbarui token OAuth Google Workspace.', 'error');
+    }
+  };
+
+  const handleManualSync = () => {
+    setPendingMutationConfirm({
+      title: 'Konfirmasi Sinkronisasi Manual Google Classroom',
+      description: `Akan menyinkronkan jadwal aktif Prodi ${selectedProdi.nama} ke akun Classroom ${workspaceSession?.userEmail || OFFICIAL_CLASSROOM_ADMIN_EMAIL} dan memeriksa kelas yang belum dibuat.`,
+      actionLabel: 'Jalankan Sinkronisasi Manual',
+      onConfirm: async () => {
+        setPendingMutationConfirm(null);
+        setIsSyncing(true);
+        const prodiJadwal = jadwalList.filter(j => j.prodiId === selectedProdi.id);
+        const missing = prodiJadwal.filter(
+          j => !courses.some(c => c.courseCode.toLowerCase() === j.kodeMK.toLowerCase())
+        );
+
+        try {
+          let syncedCount = courses.length;
+          let createdCount = 0;
+
+          if (workspaceSession?.accessToken) {
+            const liveCourses = await listGoogleClassroomCourses(workspaceSession.accessToken);
+            if (liveCourses.length > 0) {
+              syncedCount = liveCourses.length;
+            }
+            for (const mk of missing.slice(0, 2)) {
+              const created = await createGoogleClassroomCourse(workspaceSession.accessToken, {
+                name: `${mk.namaMK} (${mk.kodeMK})`,
+                section: `Kelas ${mk.kelas} · ${selectedProdi.nama}`,
+                room: mk.ruanganNama,
+                descriptionHeading: `${mk.kodeMK} - Pengampu: ${mk.dosenNama}`
+              });
+              createdCount++;
+              setCourses(prev => [
+                {
+                  id: created.id,
+                  name: created.name,
+                  section: created.section || `Kelas ${mk.kelas}`,
+                  courseCode: mk.kodeMK,
+                  room: created.room || mk.ruanganNama,
+                  dosenName: mk.dosenNama,
+                  dosenEmail: OFFICIAL_CLASSROOM_ADMIN_EMAIL,
+                  enrollmentCode: created.enrollmentCode || 'auto-sync',
+                  studentCount: mk.pesertaTotal || 30,
+                  assignmentCount: 0,
+                  announcementCount: 0,
+                  lastSync: 'Baru saja (Live API)',
+                  alternateLink: created.alternateLink || 'https://classroom.google.com',
+                  assignments: []
+                },
+                ...prev
+              ]);
+            }
+          } else {
+            // Structured local fallback update when OAuth is not signed in yet
+            if (missing.length > 0) {
+              const newlyMapped: ClassroomCourse[] = missing.slice(0, 2).map(mk => ({
+                id: `GC-SYNC-${mk.id}`,
+                name: `${mk.namaMK} (${mk.kodeMK})`,
+                section: `Kelas ${mk.kelas} · ${selectedProdi.nama}`,
+                courseCode: mk.kodeMK,
+                room: mk.ruanganNama,
+                dosenName: mk.dosenNama,
+                dosenEmail: OFFICIAL_CLASSROOM_ADMIN_EMAIL,
+                enrollmentCode: `ub-${mk.kodeMK.slice(-3).toLowerCase()}`,
+                studentCount: mk.pesertaTotal || 32,
+                assignmentCount: 0,
+                announcementCount: 0,
+                lastSync: 'Baru saja',
+                alternateLink: 'https://classroom.google.com',
+                assignments: []
+              }));
+              createdCount = newlyMapped.length;
+              setCourses(prev => [...newlyMapped, ...prev]);
+            }
+          }
+
+          const prodiStudentsCount = mahasiswaList.filter(m => m.prodiId === selectedProdi.id).length;
+          setManualSyncReport({
+            ranAt: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+            syncedCourses: syncedCount + createdCount,
+            missingSchedules: createdCount,
+            invitedCount: prodiStudentsCount,
+            detail: workspaceSession
+              ? `Sinkronisasi langsung dengan Google Classroom (${workspaceSession.userEmail}) selesai.`
+              : `Sinkronisasi data kelas SiKaprodi selesai. Masuk Google OAuth di atas untuk menulis ke Classroom live (${OFFICIAL_CLASSROOM_ADMIN_EMAIL}).`
+          });
+
+          logKaprodiActivity({
+            actor: workspaceSession?.displayName || selectedProdi.kaprodi,
+            role: 'Admin Google Workspace',
+            prodiId: selectedProdi.id,
+            category: 'SYNC_WORKSPACE',
+            actionTitle: 'Sinkronisasi Manual Google Classroom',
+            detail: `Menyinkronkan ${syncedCount + createdCount} kelas (${createdCount} kelas baru dibuat dari Jadwal SiKaprodi).`,
+            severity: 'info'
+          });
+
+          onShowToast(
+            createdCount > 0
+              ? `Sinkronisasi Manual selesai: ${createdCount} kelas baru disiapkan dari Jadwal Perkuliahan!`
+              : 'Sinkronisasi Manual selesai: Seluruh kelas Classroom sudah mutakhir.',
+            'success'
+          );
+        } catch (err: any) {
+          onShowToast(err?.message || 'Sinkronisasi gagal dijalankan.', 'error');
+        } finally {
+          setIsSyncing(false);
+        }
+      }
+    });
+  };
+
+  const handleSyncCalendar = () => {
+    const prodiJadwal = jadwalList.filter(j => j.prodiId === selectedProdi.id);
+    setPendingMutationConfirm({
+      title: 'Konfirmasi Sinkronisasi Jadwal ke Google Calendar',
+      description: `Sebanyak ${prodiJadwal.length} jadwal kuliah berulang (14 minggu + pengingat 30 menit) Prodi ${selectedProdi.nama} akan dikirim ke Google Calendar utama dosen/kaprodi.`,
+      actionLabel: 'Kirim ke Google Calendar',
+      onConfirm: async () => {
+        setPendingMutationConfirm(null);
+        if (!workspaceSession?.accessToken) {
+          onShowToast('Silakan klik "Sign in with Google" di bagian atas terlebih dahulu untuk mengotorisasi Google Calendar API.', 'info');
+          return;
+        }
+        setIsCalendarSyncing(true);
+        try {
+          const res = await syncJadwalToGoogleCalendar(
+            workspaceSession.accessToken,
+            prodiJadwal.slice(0, 6),
+            selectedProdi.nama
+          );
+          logKaprodiActivity({
+            actor: workspaceSession.displayName,
+            role: 'Admin Google Workspace',
+            prodiId: selectedProdi.id,
+            category: 'SYNC_WORKSPACE',
+            actionTitle: 'Sinkronisasi Jadwal Mengajar ke Google Calendar',
+            detail: `Berhasil membuat ${res.createdCount} agenda pengingat kuliah mingguan di Google Calendar (${workspaceSession.userEmail}).`,
+            severity: 'info'
+          });
+          onShowToast(`${res.createdCount} jadwal mengajar berhasil disinkronkan ke Google Calendar dengan pengingat 30 menit!`, 'success');
+        } catch (err: any) {
+          onShowToast(err?.message || 'Gagal sinkronisasi Google Calendar.', 'error');
+        } finally {
+          setIsCalendarSyncing(false);
+        }
+      }
+    });
+  };
+
+  const handleInviteStudentsToCourse = (course: ClassroomCourse) => {
+    const targetStudents = mahasiswaList.filter(m => m.prodiId === selectedProdi.id && m.email).slice(0, 5);
+    setPendingMutationConfirm({
+      title: `Undang Mahasiswa ke Classroom (${course.courseCode})`,
+      description: `Akan mengirimkan undangan Google Classroom ke ${targetStudents.length} mahasiswa aktif Prodi ${selectedProdi.nama} untuk mata kuliah ${course.name}.`,
+      actionLabel: 'Kirim Undangan Mahasiswa',
+      onConfirm: async () => {
+        setPendingMutationConfirm(null);
+        if (!workspaceSession?.accessToken) {
+          onShowToast(`Simulasi undangan selesai (${targetStudents.length} mahasiswa). Hubungkan akun Google Workspace untuk mengirim undangan API langsung.`, 'info');
+          return;
+        }
+        try {
+          let ok = 0;
+          for (const st of targetStudents) {
+            try {
+              await inviteStudentToGoogleClassroom(workspaceSession.accessToken, course.id, st.email);
+              ok++;
+            } catch {
+              // ignore individual student duplicate/invite errors
+            }
+          }
+          setCourses(prev => prev.map(c => c.id === course.id ? { ...c, studentCount: c.studentCount + ok, lastSync: 'Baru saja' } : c));
+          onShowToast(`${ok} undangan Google Classroom berhasil dikirimkan.`, 'success');
+        } catch (err: any) {
+          onShowToast(err?.message || 'Gagal mengirim undangan Classroom.', 'error');
+        }
+      }
+    });
   };
 
   const handleCopyLink = (url: string, id: string) => {
@@ -252,47 +498,88 @@ export const GoogleWorkspaceView: React.FC<GoogleWorkspaceViewProps> = ({
   const handleSendAnnouncement = (e: React.FormEvent) => {
     e.preventDefault();
     if (!showAnnouncementModal || !announcementText.trim()) return;
+    const targetCourse = showAnnouncementModal;
+    const textToPost = announcementText.trim();
 
-    setCourses(prev => prev.map(c => 
-      c.id === showAnnouncementModal.id 
-        ? { ...c, announcementCount: c.announcementCount + 1, lastSync: 'Baru saja' } 
-        : c
-    ));
-
-    onShowToast(`Pengumuman berhasil diposting ke Google Classroom ${showAnnouncementModal.name}!`, 'success');
-    setShowAnnouncementModal(null);
-    setAnnouncementText('');
+    setPendingMutationConfirm({
+      title: `Posting Pengumuman ke ${targetCourse.courseCode}?`,
+      description: 'Pesan ini akan diterbitkan ke stream Google Classroom mahasiswa.',
+      actionLabel: 'Terbitkan Pengumuman',
+      onConfirm: async () => {
+        setPendingMutationConfirm(null);
+        if (workspaceSession?.accessToken) {
+          try {
+            await postGoogleClassroomAnnouncement(workspaceSession.accessToken, targetCourse.id, textToPost);
+          } catch (err: any) {
+            onShowToast(err?.message || 'Gagal posting pengumuman ke Google Classroom API.', 'error');
+            return;
+          }
+        }
+        setCourses(prev => prev.map(c => 
+          c.id === targetCourse.id 
+            ? { ...c, announcementCount: c.announcementCount + 1, lastSync: 'Baru saja' } 
+            : c
+        ));
+        onShowToast(`Pengumuman berhasil diposting ke Google Classroom ${targetCourse.name}!`, 'success');
+        setShowAnnouncementModal(null);
+        setAnnouncementText('');
+      }
+    });
   };
 
   const handleCreateAssignment = (e: React.FormEvent) => {
     e.preventDefault();
     if (!showNewAssignmentModal || !newAssignment.title.trim()) return;
+    const targetCourse = showNewAssignmentModal;
+    const draft = { ...newAssignment };
 
-    setCourses(prev => prev.map(c => {
-      if (c.id === showNewAssignmentModal.id) {
-        return {
-          ...c,
-          assignmentCount: c.assignmentCount + 1,
-          lastSync: 'Baru saja',
-          assignments: [
-            {
-              id: `ASG-${Date.now()}`,
-              title: newAssignment.title,
-              dueDate: newAssignment.dueDate,
-              turnedIn: 0,
-              graded: 0,
-              assigned: c.studentCount
-            },
-            ...c.assignments
-          ]
-        };
+    setPendingMutationConfirm({
+      title: `Terbitkan Tugas "${draft.title}"?`,
+      description: `Tugas baru dengan bobot ${draft.points} poin (tenggat ${draft.dueDate}) akan ditambahkan ke kelas ${targetCourse.name}.`,
+      actionLabel: 'Terbitkan Tugas',
+      onConfirm: async () => {
+        setPendingMutationConfirm(null);
+        if (workspaceSession?.accessToken) {
+          try {
+            await createGoogleClassroomCourseWork(workspaceSession.accessToken, targetCourse.id, {
+              title: draft.title,
+              description: draft.description,
+              maxPoints: draft.points,
+              dueDate: draft.dueDate
+            });
+          } catch (err: any) {
+            onShowToast(err?.message || 'Gagal membuat tugas di Google Classroom API.', 'error');
+            return;
+          }
+        }
+
+        setCourses(prev => prev.map(c => {
+          if (c.id === targetCourse.id) {
+            return {
+              ...c,
+              assignmentCount: c.assignmentCount + 1,
+              lastSync: 'Baru saja',
+              assignments: [
+                {
+                  id: `ASG-${Date.now()}`,
+                  title: draft.title,
+                  dueDate: draft.dueDate,
+                  turnedIn: 0,
+                  graded: 0,
+                  assigned: c.studentCount
+                },
+                ...c.assignments
+              ]
+            };
+          }
+          return c;
+        }));
+
+        onShowToast(`Tugas baru "${draft.title}" berhasil diterbitkan di Google Classroom!`, 'success');
+        setShowNewAssignmentModal(null);
+        setNewAssignment({ title: '', description: '', points: 100, dueDate: '2026-11-20' });
       }
-      return c;
-    }));
-
-    onShowToast(`Tugas baru "${newAssignment.title}" berhasil diterbitkan di Google Classroom!`, 'success');
-    setShowNewAssignmentModal(null);
-    setNewAssignment({ title: '', description: '', points: 100, dueDate: '2026-11-20' });
+    });
   };
 
   const handleCreateNewForm = (e: React.FormEvent) => {
@@ -322,59 +609,90 @@ export const GoogleWorkspaceView: React.FC<GoogleWorkspaceViewProps> = ({
     <div className="space-y-6">
       
       {/* Top Banner: Google Workspace for Education Integration Hub */}
-      <div className="bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-6 sm:p-8 shadow-sm border border-blue-900/40 relative overflow-hidden">
+      <div className="bg-gradient-to-r from-[#064e3b] via-[#065f46] to-teal-900 text-white rounded-2xl p-6 sm:p-8 shadow-sm border border-emerald-800/40 relative overflow-hidden">
         <div className="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-6 relative z-10">
           <div className="space-y-2 max-w-2xl">
-            <div className="flex items-center gap-2 text-xs font-semibold tracking-wide uppercase text-blue-300">
-              <ShieldCheck className="w-4 h-4 text-emerald-400" />
-              <span>Google Workspace for Education · Terotorisasi</span>
-              <span className="text-slate-400">·</span>
-              <span className="font-mono text-emerald-300">Project: vernal-footing-bdtd0</span>
+            <div className="flex flex-wrap items-center gap-2 text-xs font-semibold tracking-wide uppercase text-emerald-200">
+              <ShieldCheck className="w-4 h-4 text-emerald-300" />
+              <span>Google Workspace for Education · {OFFICIAL_CLASSROOM_ADMIN_EMAIL}</span>
             </div>
-            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-3">
-              Google Classroom &amp; Google Forms Hub
-              <span className="text-xs px-2.5 py-0.5 rounded-full bg-blue-500/20 text-blue-200 border border-blue-400/30 font-medium">
-                v2.0 Real-time Sync
-              </span>
+            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white flex flex-wrap items-center gap-3">
+              Google Classroom, Calendar &amp; Forms Hub
             </h1>
-            <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-              Integrasi langsung pangkalan data Program Studi {selectedProdi.nama} dengan ekosistem Google Classroom (tugas, materi, penilaian) dan Google Forms (evaluasi dosen EDOM, pendaftaran TA/KP, tracer study).
+            <p className="text-xs sm:text-sm text-emerald-100 leading-relaxed">
+              Integrasi Program Studi {selectedProdi.nama} dengan Google Classroom ({OFFICIAL_CLASSROOM_ADMIN_EMAIL}), pengingat jadwal Google Calendar dosen, Drive Repository BKD, serta Google Forms &amp; Sheets Tracer Study.
             </p>
           </div>
 
-          <div className="flex items-center gap-3 shrink-0 flex-wrap">
+          <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
             <button
               type="button"
-              onClick={handleSyncAll}
+              onClick={handleManualSync}
               disabled={isSyncing}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-xl text-xs transition-all shadow-md shadow-blue-600/30 disabled:opacity-50"
+              className="flex items-center gap-2 px-4 py-2 bg-white hover:bg-emerald-50 text-emerald-950 font-bold rounded-xl text-xs transition-all shadow-sm disabled:opacity-50"
             >
-              <RefreshCw className={`w-4 h-4 ${isSyncing ? 'animate-spin' : ''}`} />
-              <span>{isSyncing ? 'Menyinkronkan...' : 'Sinkronkan Google Workspace'}</span>
+              <RefreshCw className={`w-4 h-4 text-emerald-700 ${isSyncing ? 'animate-spin' : ''}`} />
+              <span>{isSyncing ? 'Menyinkronkan...' : 'Sinkronisasi Manual'}</span>
             </button>
 
-            <a
-              href="https://workspace.google.com"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex items-center gap-2 px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white rounded-xl text-xs font-medium border border-white/20 transition-colors"
+            <button
+              type="button"
+              onClick={handleSyncCalendar}
+              disabled={isCalendarSyncing}
+              className="flex items-center gap-2 px-4 py-2 bg-emerald-700 hover:bg-emerald-600 text-white font-bold rounded-xl text-xs border border-emerald-500/50 transition-all shadow-sm disabled:opacity-50"
             >
-              <ExternalLink className="w-3.5 h-3.5" />
-              <span>Google Admin Console</span>
-            </a>
+              <CalendarCheck2 className="w-4 h-4" />
+              <span>{isCalendarSyncing ? 'Mengirim Jadwal...' : 'Sinkron Jadwal ke Google Calendar'}</span>
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Subtab Navigation: Google Classroom vs Google Forms */}
-      <div className="border-b border-slate-200">
-        <nav className="flex items-center gap-6 text-xs sm:text-sm font-medium text-slate-600">
+      {/* Real OAuth Sign-In Bar */}
+      <GoogleWorkspaceSignInCard
+        session={workspaceSession}
+        sessionHint={sessionHint}
+        needsRefresh={needsRefresh}
+        isExpiringSoon={isExpiringSoon}
+        tokenRemainingMinutes={tokenRemainingMinutes}
+        isSigningIn={isSigningIn}
+        onSignIn={handleSignInWorkspace}
+        onRefreshToken={handleRefreshWorkspaceToken}
+        onSignOut={() => {
+          void signOutWorkspaceOAuth(false);
+          onShowToast('Sesi Google Workspace OAuth diputuskan dari memori.', 'info');
+        }}
+      />
+
+      {manualSyncReport && (
+        <div className="bg-[#ecfdf5] border border-emerald-300 rounded-xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+          <div className="space-y-0.5">
+            <span className="font-bold text-emerald-950 block">
+              Ringkasan Sinkronisasi Manual ({manualSyncReport.ranAt})
+            </span>
+            <p className="text-emerald-900">
+              {manualSyncReport.detail} Kelas aktif: <strong className="font-mono">{manualSyncReport.syncedCourses}</strong> · Kelas baru dipetakan: <strong className="font-mono">{manualSyncReport.missingSchedules}</strong>.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setManualSyncReport(null)}
+            className="text-[11px] font-semibold text-emerald-800 hover:underline self-start sm:self-center"
+          >
+            Tutup Ringkasan
+          </button>
+        </div>
+      )}
+
+      {/* Subtab Navigation: Google Classroom, Google Drive & Google Forms */}
+      <div className="border-b border-slate-200 overflow-x-auto">
+        <nav className="flex items-center gap-6 text-xs sm:text-sm font-medium text-slate-600 whitespace-nowrap">
           <button
             type="button"
             onClick={() => setActiveTab('classroom')}
-            className={`py-3 flex items-center gap-2 border-b-2 transition-colors ${
+            className={`py-3 flex items-center gap-2 border-b-2 transition-colors cursor-pointer ${
               activeTab === 'classroom'
-                ? 'border-blue-600 text-blue-700 font-bold'
+                ? 'border-[#065f46] text-[#065f46] font-bold'
                 : 'border-transparent hover:text-slate-900'
             }`}
           >
@@ -384,10 +702,23 @@ export const GoogleWorkspaceView: React.FC<GoogleWorkspaceViewProps> = ({
 
           <button
             type="button"
+            onClick={() => setActiveTab('drive')}
+            className={`py-3 flex items-center gap-2 border-b-2 transition-colors cursor-pointer ${
+              activeTab === 'drive'
+                ? 'border-[#065f46] text-[#065f46] font-bold'
+                : 'border-transparent hover:text-slate-900'
+            }`}
+          >
+            <HardDrive className="w-4 h-4" />
+            <span>Google Drive (Dokumentasi Akademik &amp; Bukti BKD)</span>
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('forms')}
-            className={`py-3 flex items-center gap-2 border-b-2 transition-colors ${
+            className={`py-3 flex items-center gap-2 border-b-2 transition-colors cursor-pointer ${
               activeTab === 'forms'
-                ? 'border-blue-600 text-blue-700 font-bold'
+                ? 'border-[#065f46] text-[#065f46] font-bold'
                 : 'border-transparent hover:text-slate-900'
             }`}
           >
@@ -396,6 +727,18 @@ export const GoogleWorkspaceView: React.FC<GoogleWorkspaceViewProps> = ({
           </button>
         </nav>
       </div>
+
+      {/* SECTION 0: GOOGLE DRIVE FILE MANAGER */}
+      {activeTab === 'drive' && (
+        <GoogleDriveManagerPanel
+          session={workspaceSession}
+          isSigningIn={isSigningIn}
+          onSignIn={handleSignInWorkspace}
+          selectedProdi={selectedProdi}
+          dosenList={dosenList}
+          onShowToast={onShowToast}
+        />
+      )}
 
       {/* SECTION 1: GOOGLE CLASSROOM HUB */}
       {activeTab === 'classroom' && (
@@ -506,21 +849,31 @@ export const GoogleWorkspaceView: React.FC<GoogleWorkspaceViewProps> = ({
                 </div>
 
                 {/* Card Footer Actions */}
-                <div className="p-4 bg-slate-50 border-t border-slate-100 flex items-center justify-between gap-2 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => setShowAnnouncementModal(course)}
-                    className="flex items-center gap-1 px-3 py-1.5 bg-white hover:bg-slate-100 text-slate-700 font-medium rounded-lg border border-slate-200 transition-colors"
-                  >
-                    <MessageSquare className="w-3.5 h-3.5 text-blue-600" />
-                    <span>Posting Pengumuman</span>
-                  </button>
+                <div className="p-4 bg-slate-50 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => setShowAnnouncementModal(course)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-slate-100 text-slate-700 font-medium rounded-lg border border-slate-200 transition-colors"
+                    >
+                      <MessageSquare className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>Pengumuman</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleInviteStudentsToCourse(course)}
+                      className="flex items-center gap-1 px-2.5 py-1.5 bg-white hover:bg-emerald-50 text-emerald-800 font-medium rounded-lg border border-emerald-200 transition-colors"
+                    >
+                      <UserPlus className="w-3.5 h-3.5 text-emerald-700" />
+                      <span>Undang Mhs</span>
+                    </button>
+                  </div>
 
                   <a
                     href={course.alternateLink}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-1 px-3 py-1.5 bg-blue-700 hover:bg-blue-800 text-white font-bold rounded-lg transition-colors shadow-2xs"
+                    className="flex items-center gap-1 px-3 py-1.5 bg-[#065f46] hover:bg-emerald-900 text-white font-bold rounded-lg transition-colors shadow-2xs"
                   >
                     <span>Buka Classroom</span>
                     <ExternalLink className="w-3 h-3" />
@@ -862,6 +1215,15 @@ export const GoogleWorkspaceView: React.FC<GoogleWorkspaceViewProps> = ({
           </div>
         </div>
       )}
+
+      <WorkspaceMutationConfirmDialog
+        isOpen={Boolean(pendingMutationConfirm)}
+        title={pendingMutationConfirm?.title || ''}
+        description={pendingMutationConfirm?.description || ''}
+        actionLabel={pendingMutationConfirm?.actionLabel || 'Lanjutkan'}
+        onConfirm={() => pendingMutationConfirm?.onConfirm()}
+        onCancel={() => setPendingMutationConfirm(null)}
+      />
 
     </div>
   );
